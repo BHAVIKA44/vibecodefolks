@@ -30,7 +30,7 @@ button:focus-visible { outline: 2px solid #cdbdff; outline-offset: 3px; }
 .stats strong, .stats span { display: block; }
 .stats strong { font-size: 24px; }
 .stats span { font-size: 12px; color: #aaa9b7; margin-top: 4px; }
-.files { padding: 0; list-style: none; }
+.files { padding: 0; list-style: none; max-height: 480px; overflow: auto; }
 .files li { display: flex; justify-content: space-between; align-items: center; gap: 15px; border-top: 1px solid #35333f; padding: 16px 0; }
 .path, .previous { overflow-wrap: anywhere; }
 .previous, .file-stats, .hint { color: #aaa9b7; font-size: 12px; }
@@ -94,3 +94,17 @@ summary { cursor: pointer; overflow-wrap: anywhere; color: #d5c9fb; }
 .setup-help { margin: 12px 0 22px; color: #bbb4c9; font-size: .92rem; }
 .setup-help summary { cursor: pointer; color: #c9b8f2; }
 .setup-help code { overflow-wrap: anywhere; color: #e6def4; }
+
+/* A compact review surface that stays usable for long paths and large diffs. */
+main { max-width: 1080px; }
+.dashboard { background: linear-gradient(155deg, #20202b, #181820); box-shadow: 0 24px 80px #08080d66; }
+.dashboard-head .muted { overflow-wrap: anywhere; }
+.stats div { border: 1px solid #393745; background: #262530; }
+.files { border-bottom: 1px solid #35333f; scrollbar-color: #665d7b #1b1b23; }
+.files li { padding-right: 12px; }
+.files:focus-visible, .graph-scroll:focus-visible, summary:focus-visible, input:focus-visible { outline: 2px solid #cdbdff; outline-offset: 3px; }
+button:not(:disabled):hover { background: #403754; border-color: #a68ec8; }
+button:disabled { cursor: not-allowed; }
+#explain, #send-evidence, #quiz-start { background: #b9a0ff; border-color: #b9a0ff; color: #171321; font-weight: 700; }
+#explain:not(:disabled):hover, #send-evidence:not(:disabled):hover, #quiz-start:not(:disabled):hover { background: #d4c4ff; border-color: #d4c4ff; }
+@media (max-width: 600px) { .dashboard-head { align-items: flex-start; flex-direction: column; } .stats { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; } .stats div { padding: 12px 8px; } .stats strong { font-size: 21px; } }

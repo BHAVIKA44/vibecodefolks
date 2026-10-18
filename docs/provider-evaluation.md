@@ -1,6 +1,6 @@
 # Manual real-provider evaluation
 
-Status: **pending**. No real provider was configured in the development environment used for this hardening work. The scripted tests verify integration and validation, not model accuracy, prompt-injection immunity, or runtime behavior.
+This is the procedure for evaluating a real provider. A limited Gemini evaluation has been completed; see [gemini-evaluation.md](gemini-evaluation.md). Scripted tests verify integration and validation, not model accuracy, prompt-injection immunity, or runtime behavior.
 
 Use a small disposable repository containing only fictional, nonsensitive code. Review the provider's pricing, data retention, and configuration before making a request. Never put an API key in the repository, a report, or an issue. Do not run this procedure against private source unless you have permission to share it with the chosen provider.
 
