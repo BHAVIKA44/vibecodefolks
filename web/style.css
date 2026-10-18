@@ -91,3 +91,6 @@ summary { cursor: pointer; overflow-wrap: anywhere; color: #d5c9fb; }
 .quiz-reaction { color: #d7c6ff; font-weight: 700; }
 .quiz-score { color: #d7c6ff; font-size: 1.5rem; font-weight: 700; }
 @media (max-width: 600px) { .quiz-section { padding: 18px; } }
+.setup-help { margin: 12px 0 22px; color: #bbb4c9; font-size: .92rem; }
+.setup-help summary { cursor: pointer; color: #c9b8f2; }
+.setup-help code { overflow-wrap: anywhere; color: #e6def4; }

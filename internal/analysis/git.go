@@ -89,6 +89,8 @@ func Discover(dir string) (RepositoryInfo, error) {
 			return RepositoryInfo{}, err
 		}
 	}
+	// Git for Windows may return forward slashes; normalize for native path operations.
+	path = filepath.Clean(path)
 	branch, err := run(path, "symbolic-ref", "--quiet", "--short", "HEAD")
 	detached := false
 	if err != nil {

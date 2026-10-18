@@ -2,7 +2,11 @@
 
 **AI wrote it. Do you understand it?**
 
-VibeCodeFolks is a local, open-source developer tool for understanding changes made by AI coding agents. It shows Git changes across programming languages and can request an optional evidence-backed explanation from an OpenAI-compatible provider.
+AI coding tools can change an application faster than a developer can inspect it. VibeCodeFolks helps you slow down and understand those changes: it shows Git changes, optionally asks an OpenAI-compatible provider for an evidence-backed explanation, and presents a change map and quiz. It runs locally as a single Go executable.
+
+![Local Git dashboard](docs/dashboard.png)
+
+The dashboard screenshot shows a fictional sample repository; the graph and quiz screenshots below use a scripted mock provider.
 
 ## Get started
 
@@ -22,6 +26,13 @@ go build -o vibecodefolks .
 ```
 
 The dashboard assets are embedded in the executable. Node.js, Python, Electron, a database, and accounts are not required.
+
+## Current capabilities
+
+- Inspect working-tree Git changes or, when clean, the last commit.
+- Review bounded code evidence before sending it to a configured provider.
+- Explore an optional AI-generated change map and understanding quiz with cited source excerpts.
+- Run locally without a database, cloud service, or frontend runtime dependency.
 
 ## Git changes
 
@@ -74,7 +85,24 @@ AI output is an interpretation, not a test result. The server checks that each f
 
 ## Limitations
 
-Evidence is language-independent text, not a full parser for every language or framework. Only changed diff context is supplied; unchanged files, large changes, pure renames without textual hunks, binary content, submodules, symlinks, and other skipped material may be missing. The provider may fail, return invalid JSON or invalid references, or misunderstand valid evidence; invalid structured responses are rejected. Filters are heuristic, and files can change during analysis. Unmerged conflicts must be resolved first. The app does not execute or test the project and cannot confirm runtime behavior. Citations establish that the referenced lines exist in the supplied evidence, not that an inferred relationship is correct.
+Evidence is language-independent text and can include React/TypeScript, Python, Java, Go, and other text-based projects. It is not a full parser for every language or framework, and semantic accuracy has not been established equally across stacks. Only changed diff context is supplied; unchanged files, large changes, pure renames without textual hunks, binary content, submodules, symlinks, and other skipped material may be missing. The provider may fail, return invalid JSON or invalid references, or misunderstand valid evidence; invalid structured responses are rejected. Filters are heuristic, and files can change during analysis. Unmerged conflicts must be resolved first. The app does not execute or test the project and cannot confirm runtime behavior. Citations establish that the referenced lines exist in the supplied evidence, not that an inferred relationship is correct.
+
+## Development and contributing
+
+Install Git, Go 1.21 or newer, and Node.js for the frontend interaction tests. Node.js is a development dependency only.
+
+```sh
+gofmt -l .
+go vet ./...
+go test ./...
+go build ./...
+node --check web/app.js
+node --check web/graph.js
+node --check web/quiz.js
+node --test tests/dashboard.test.cjs
+```
+
+Contributions are welcome: open an issue to discuss substantial changes, then submit a focused pull request with tests and a description of how you verified it. CI is configured for Linux, macOS, and Windows. See the [real-provider evaluation procedure](docs/provider-evaluation.md) and [future release plan](docs/release-plan.md). Real-provider quality validation remains pending.
 
 ## License
 

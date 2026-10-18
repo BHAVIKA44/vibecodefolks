@@ -126,3 +126,14 @@ test('changed snapshot blocks quiz', async () => {
   assert.match(elements.get('quiz-status').textContent,/evidence has changed/);
   assert.equal(elements.get('quiz-content').children.length,0);
 });
+
+test('explain is disabled until the refreshed Git view finishes', async () => {
+  let resolveChanges;
+  const changesRequest = new Promise(resolve => {resolveChanges=resolve;});
+  const {elements,load}=environment(url=>url==='/api/changes'?changesRequest:Promise.reject(Error('unexpected request')));
+  load('graph.js');load('quiz.js');load('app.js');
+  assert.equal(elements.get('explain').disabled,true);
+  resolveChanges(jsonResponse(changes));
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(elements.get('explain').disabled,false);
+});

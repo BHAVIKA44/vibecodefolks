@@ -17,7 +17,7 @@ async function refresh() {
   element('consent-panel').hidden = true;
   element('explanation').hidden = true;
   element('cancel-request').hidden = true;
-  element('explain').disabled = false;
+  element('explain').disabled = true;
   element('explain-status').textContent = 'Previous explanation cleared. Refresh captures a new Git view.';
   const button = element('refresh');
   button.disabled = true;
@@ -29,7 +29,7 @@ async function refresh() {
     const response = await fetch('/api/changes', { cache: 'no-store' });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'Analysis failed.');
-    element('repository').textContent = `${data.repository.name} · ${data.repository.detached ? 'Detached HEAD ' : 'Branch '}${data.repository.branch}`;
+    element('repository').textContent = `${data.repository.root || data.repository.name} · ${data.repository.detached ? 'Detached HEAD ' : 'Branch '}${data.repository.branch}`;
     element('scope').textContent = data.scope;
     element('scope').hidden = false;
     element('count').textContent = data.total_files;
@@ -55,7 +55,7 @@ async function refresh() {
   } catch (error) {
     element('repository').textContent = 'Repository unavailable';
     element('message').textContent = error.message || 'Unable to analyze this repository.';
-  } finally { button.disabled = false; }
+  } finally { button.disabled = false; element('explain').disabled = false; }
 }
 element('refresh').addEventListener('click', refresh);
 async function post(url, data, signal) {

@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"testing/fstest"
@@ -134,5 +135,68 @@ func TestConsentAndOrigin(t *testing.T) {
 	r = request("POST", "/api/explain", `{"token":"`+prep.Token+`","consent":false}`, "http://127.0.0.1:8888", "127.0.0.1:8888")
 	if r.Code != 403 || calls.Load() != 1 {
 		t.Fatalf("remote without consent: %d", r.Code)
+	}
+}
+
+func TestPreparedEvidenceCannotBeUsedConcurrently(t *testing.T) {
+	d := t.TempDir()
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	c := exec.Command("git", "init", "-b", "main", d)
+	if out, err := c.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v %s", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(d, "hello.go"), []byte("package hello\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var calls atomic.Int32
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": `{"summary":"change","changes":[{"title":"package","explanation":"Package line","references":[{"path":"hello.go","side":"new","start":1,"end":1}]}],"impacts":[],"relationships":[],"uncertainties":[]}`}}}})
+	}))
+	defer mock.Close()
+	t.Setenv("VIBECODEFOLKS_AI_ENDPOINT", mock.URL)
+	t.Setenv("VIBECODEFOLKS_AI_MODEL", "test")
+	t.Setenv("VIBECODEFOLKS_AI_API_KEY", "")
+	h := Handler(d, fstest.MapFS{}, "example.test")
+	post := func(path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("POST", "http://example.test"+path, strings.NewReader(body))
+		req.Header.Set("Origin", "http://example.test")
+		req.Header.Set("Content-Type", "application/json")
+		out := httptest.NewRecorder()
+		h.ServeHTTP(out, req)
+		return out
+	}
+	prep := post("/api/explain/prepare", "{}")
+	if prep.Code != 200 {
+		t.Fatal(prep.Body.String())
+	}
+	var token struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(prep.Body.Bytes(), &token); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	results := make(chan int, 2)
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results <- post("/api/explain", `{"token":"`+token.Token+`","consent":false}`).Code
+		}()
+	}
+	wg.Wait()
+	close(results)
+	success, invalid := 0, 0
+	for status := range results {
+		if status == 200 {
+			success++
+		} else if status == 400 {
+			invalid++
+		}
+	}
+	if success != 1 || invalid != 1 || calls.Load() != 1 {
+		t.Fatalf("success=%d invalid=%d calls=%d", success, invalid, calls.Load())
 	}
 }

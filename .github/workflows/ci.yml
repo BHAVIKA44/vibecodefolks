@@ -1,0 +1,36 @@
+name: Quality checks
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify Go formatting
+        shell: bash
+        run: |
+          files=$(gofmt -l .)
+          if [ -n "$files" ]; then echo "$files"; exit 1; fi
+      - run: go vet ./...
+      - run: go test ./...
+      - run: go build ./...
+      - name: Check JavaScript syntax and interaction
+        run: |
+          node --check web/app.js
+          node --check web/graph.js
+          node --check web/quiz.js
+          node --test tests/dashboard.test.cjs
