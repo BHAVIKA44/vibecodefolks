@@ -20,6 +20,20 @@ SCENARIOS = {
         "base": {"discount.go": "package pricing\n\nfunc Discount(total int) int {\n\treturn total / 10\n}\n"},
         "changed": {"discount.go": "package pricing\n\nimport \"errors\"\n\n// Discount returns ten percent off orders of at least 100 cents.\nfunc Discount(total int) (int, error) {\n\tif total < 0 {\n\t\treturn 0, errors.New(\"total cannot be negative\")\n\t}\n\tif total < 100 {\n\t\treturn 0, nil\n\t}\n\treturn total / 10, nil\n}\n"},
     },
+    "mixed-checkout": {
+        "base": {
+            "README.md": "# Sample shop\nA fictional store for testing.\n",
+            "api/checkout.py": "def checkout(data):\n    return {'total': sum(data['items'])}, 200\n",
+            "api/old_cart.py": "def legacy_checkout(data):\n    return {'total': 0}\n",
+            "web/cart.js": "export function checkout(items) {\n  return fetch('/api/checkout', { method: 'POST', body: JSON.stringify({ items }) });\n}\n",
+        },
+        "changed": {
+            "README.md": "# Sample shop\nA fictional store for testing.\n\nSupport hours: weekdays.\n",
+            "api/checkout.py": "def checkout(data):\n    items = data.get('items', [])\n    if not items:\n        return {'error': 'cart is empty'}, 400\n    total = sum(items)\n    if data.get('coupon') == 'SAVE10':\n        total = total * 90 // 100\n    return {'total': total}, 200\n",
+            "web/cart.js": "export async function checkout(items, coupon) {\n  const response = await fetch('/api/checkout', {\n    method: 'POST', headers: { 'Content-Type': 'application/json' },\n    body: JSON.stringify({ items, coupon })\n  });\n  return response.json();\n}\n",
+        },
+        "removed": ["api/old_cart.py"],
+    },
 }
 
 
@@ -51,6 +65,8 @@ def main():
         run_git(repo, "add", ".")
         run_git(repo, "commit", "-q", "-m", "Initial fictional code")
         write_files(repo, scenario["changed"])
+        for name in scenario.get("removed", []):
+            (repo / name).unlink()
         print(f"Created {repo}")
 
 

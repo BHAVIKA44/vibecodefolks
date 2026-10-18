@@ -133,7 +133,27 @@ test('explain is disabled until the refreshed Git view finishes', async () => {
   const {elements,load}=environment(url=>url==='/api/changes'?changesRequest:Promise.reject(Error('unexpected request')));
   load('graph.js');load('quiz.js');load('app.js');
   assert.equal(elements.get('explain').disabled,true);
-  resolveChanges(jsonResponse(changes));
+  resolveChanges(jsonResponse({...changes, total_files: 1}));
   await new Promise(resolve=>setImmediate(resolve));
   assert.equal(elements.get('explain').disabled,false);
+});
+
+test('unavailable repository keeps explanation disabled until refresh succeeds', async () => {
+  let available = false;
+  const fetch = async () => available ? jsonResponse({...changes, total_files: 1}) : {ok:false, json:async()=>({error:'Repository unavailable'})};
+  const {elements,load}=environment(fetch); load('graph.js'); load('quiz.js'); load('app.js');
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(elements.get('explain').disabled,true);
+  assert.match(elements.get('message').textContent,/Repository unavailable/);
+  available = true;
+  await elements.get('refresh').listeners.click();
+  assert.equal(elements.get('explain').disabled,false);
+});
+
+test('a clean repository has no changes to explain', async () => {
+  const fetch = async () => jsonResponse({...changes, total_files: 0, files: []});
+  const {elements,load}=environment(fetch); load('graph.js'); load('quiz.js'); load('app.js');
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(elements.get('explain').disabled,true);
+  assert.match(elements.get('message').textContent,/No changes to display/);
 });
