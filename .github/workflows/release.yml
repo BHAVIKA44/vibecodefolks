@@ -1,0 +1,110 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+jobs:
+  quality:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check formatting
+        shell: bash
+        run: test -z "$(gofmt -l .)"
+      - run: go vet ./...
+      - run: go test ./...
+      - run: go build ./...
+      - run: node --check web/app.js && node --check web/graph.js && node --check web/quiz.js && node --test tests/dashboard.test.cjs
+      - if: runner.os != 'Windows'
+        run: sh tests/installer.sh
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+      - name: Build and verify archives
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          scripts/package-release.sh "$VERSION" "$RUNNER_TEMP/dist"
+          cd "$RUNNER_TEMP/dist"
+          sha256sum -c checksums.txt
+          for f in *.tar.gz; do test "$(tar -tzf "$f")" = vibecodefolks; done
+          test "$(unzip -Z1 *.zip)" = vibecodefolks.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: ${{ runner.temp }}/dist/*
+          if-no-files-found: error
+  smoke:
+    needs: package
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-latest, target: linux_amd64 }
+          - { runner: ubuntu-24.04-arm, target: linux_arm64 }
+          - { runner: macos-14, target: darwin_arm64 }
+          - { runner: macos-15-intel, target: darwin_amd64 }
+          - { runner: windows-latest, target: windows_amd64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: dist
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify archive and smoke test native binary
+        shell: bash
+        env:
+          VERSION: ${{ github.ref_name }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          cd dist
+          if [ "$TARGET" = windows_amd64 ]; then
+            asset="vibecodefolks_${VERSION}_${TARGET}.zip"
+            python ../scripts/verify-archive.py checksums.txt "$asset"
+            unzip -q "$asset"
+            binary=vibecodefolks.exe
+          else
+            asset="vibecodefolks_${VERSION}_${TARGET}.tar.gz"
+            python ../scripts/verify-archive.py checksums.txt "$asset"
+            tar -xzf "$asset"
+            binary=vibecodefolks
+          fi
+          python ../scripts/release-smoke.py "$binary" "$VERSION"
+  publish:
+    needs: [quality, smoke]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: dist
+      - name: Publish new release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          cd dist
+          sha256sum -c checksums.txt
+          gh release create "$VERSION" --verify-tag --title "VibeCodeFolks $VERSION" --notes 'Initial public release. See the README for installation, privacy limitations, and usage.' ./*

@@ -2,6 +2,7 @@ package main
 
 import (
 	"embed"
+	"flag"
 	"fmt"
 	"io/fs"
 	"log"
@@ -19,13 +20,28 @@ import (
 //go:embed web/*
 var assets embed.FS
 
+// version is set for releases with -ldflags "-X main.version=vX.Y.Z".
+var version = "dev"
+
 func main() {
-	if len(os.Args) > 2 {
-		log.Fatal("usage: vibecodefolks [project-directory]")
+	noOpen := flag.Bool("no-open", false, "do not open a browser")
+	showVersion := flag.Bool("version", false, "print version and exit")
+	flag.Usage = func() {
+		fmt.Fprintln(flag.CommandLine.Output(), "Usage: vibecodefolks [--no-open] [project-directory]")
+		flag.PrintDefaults()
+	}
+	flag.Parse()
+	if *showVersion {
+		fmt.Println("vibecodefolks", version)
+		return
+	}
+	if flag.NArg() > 1 {
+		flag.Usage()
+		os.Exit(2)
 	}
 	dir := "."
-	if len(os.Args) == 2 {
-		dir = os.Args[1]
+	if flag.NArg() == 1 {
+		dir = flag.Arg(0)
 	}
 	dir, err := filepath.Abs(dir)
 	if err != nil {
@@ -53,8 +69,10 @@ func main() {
 	}
 	url := "http://" + listener.Addr().String()
 	fmt.Printf("Project: %s\nDashboard: %s\nPress Ctrl+C to stop.\n", dir, url)
-	if err := openBrowser(url); err != nil {
-		log.Printf("Could not open browser: %v; open %s manually", err, url)
+	if !*noOpen {
+		if err := openBrowser(url); err != nil {
+			log.Printf("Could not open browser: %v; open %s manually", err, url)
+		}
 	}
 	log.Fatal(http.Serve(listener, server.Handler(dir, web, listener.Addr().String())))
 }

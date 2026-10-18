@@ -12,25 +12,49 @@ One Go executable. A local browser dashboard. No database, frontend runtime, or 
 
 The dashboard screenshot shows a fictional sample repository; the graph and quiz screenshots below use a scripted mock provider.
 
+## Install
+
+Git is required. On macOS or Linux, install the latest stable release:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/BHAVIKA44/vibecodefolks/main/install.sh | sh
+```
+
+Executing a remote shell script requires trusting its source. You can inspect [install.sh](install.sh) first, or download the archive and `checksums.txt` from [Releases](https://github.com/BHAVIKA44/vibecodefolks/releases), verify its SHA-256 checksum, and extract the executable yourself. The installer writes to `~/.local/bin`; set `VIBECODEFOLKS_INSTALL_DIR` to choose another directory, or `VIBECODEFOLKS_VERSION=v0.1.0` to select a version. Add the installation directory to your PATH if necessary. No sudo or shell-profile changes are made. For the current shell, run `export PATH="$HOME/.local/bin:$PATH"` (or substitute your custom directory).
+
+On Windows PowerShell, install a verified v0.1.0 archive (Git must already be installed):
+
+```powershell
+$tag = 'v0.1.0'
+$asset = "vibecodefolks_${tag}_windows_amd64.zip"
+$base = "https://github.com/BHAVIKA44/vibecodefolks/releases/download/$tag"
+$dir = Join-Path $env:USERPROFILE '.local\bin'
+New-Item -ItemType Directory -Force $dir | Out-Null
+$tmp = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
+New-Item -ItemType Directory $tmp | Out-Null
+try {
+  Invoke-WebRequest "$base/$asset" -OutFile "$tmp/$asset"
+  Invoke-WebRequest "$base/checksums.txt" -OutFile "$tmp/checksums.txt"
+  $lines = @(Get-Content "$tmp/checksums.txt" | Where-Object { $_.EndsWith("  $asset") })
+  if ($lines.Count -ne 1 -or $lines[0] -notmatch '^[0-9a-f]{64}  ') { throw 'Missing or invalid checksum' }
+  if ((Get-FileHash "$tmp/$asset" -Algorithm SHA256).Hash.ToLower() -ne $lines[0].Substring(0, 64)) { throw 'Checksum mismatch' }
+  Expand-Archive "$tmp/$asset" -DestinationPath "$tmp/extracted"
+  Move-Item -Force "$tmp/extracted/vibecodefolks.exe" "$dir/vibecodefolks.exe"
+} finally { Remove-Item -Recurse -Force $tmp }
+& "$dir/vibecodefolks.exe" --version
+```
+
+Windows users can run `& "$env:USERPROFILE/.local/bin/vibecodefolks.exe" .` or add that directory to PATH. The binaries are unsigned; follow your operating system's normal security prompts. The executable embeds the dashboard and requires no Go, Node.js, Python, Electron, database, or account at runtime.
+
 ## Quick start
 
-Install Git and Go 1.21 or later, then build from source:
-
 ```sh
-git clone https://github.com/BHAVIKA44/vibecodefolks.git
-cd vibecodefolks
-go build -o vibecodefolks .
-./vibecodefolks /path/to/project
+vibecodefolks .
+# Optional: don't open a browser automatically
+vibecodefolks --no-open /path/to/project
 ```
 
-The project path can point anywhere inside a Git repository. Omit it to inspect the current directory. The CLI opens a dashboard on `127.0.0.1`; if the browser does not open, visit the printed URL. Stop the server with Ctrl+C.
-
-```sh
-# Or run directly from the VibeCodeFolks checkout
-go run . /path/to/project
-```
-
-The dashboard assets are embedded in the executable. Node.js, Python, Electron, a database, and accounts are not required.
+The path can point anywhere inside a Git repository; omit it for the current directory. The dashboard listens on `127.0.0.1`. Open the printed URL if necessary and press Ctrl+C to stop the server.
 
 ## How it works
 
@@ -55,10 +79,10 @@ The dashboard shows the combined working-tree diff from `HEAD`, plus untracked n
 Set these environment variables before starting the CLI:
 
 ```sh
-export VIBECODEFOLKS_AI_ENDPOINT="http://127.0.0.1:11434/v1/chat/completions"
-export VIBECODEFOLKS_AI_MODEL="your-model-name"
-# For remote providers, also set VIBECODEFOLKS_AI_API_KEY in your shell.
-./vibecodefolks /path/to/project
+export VIBECODEFOLKS_AI_ENDPOINT="https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+export VIBECODEFOLKS_AI_MODEL="your-available-gemini-model"
+# Set VIBECODEFOLKS_AI_API_KEY securely in your shell, without sharing it.
+vibecodefolks /path/to/project
 ```
 
 Use the provider's full chat-completions URL. Remote endpoints require HTTPS and an API key; loopback endpoints can use HTTP and do not require a key. Providers must support OpenAI-compatible chat completions and JSON object responses. No AI request is made when the dashboard opens. Click **Explain Changes**, review the evidence and provider details, then explicitly send it. Remote providers require the consent checkbox. Canceling a provider request cancels the HTTP call where possible.
@@ -99,11 +123,19 @@ AI output is an interpretation, not a test result. The server checks that each f
 
 Evidence is language-independent text and can include React/TypeScript, Python, Java, Go, and other text-based projects. It is not a full parser for every language or framework, and semantic accuracy has not been established equally across stacks. Only changed diff context is supplied; unchanged files, large changes, pure renames without textual hunks, binary content, submodules, symlinks, and other skipped material may be missing. The provider may fail, return invalid JSON or invalid references, or misunderstand valid evidence; invalid structured responses are rejected. Filters are heuristic, and files can change during analysis. Unmerged conflicts must be resolved first. The app does not execute or test the project and cannot confirm runtime behavior. Citations establish that the referenced lines exist in the supplied evidence, not that an inferred relationship is correct.
 
+## Benchmarks
+
+On a Linux ARM64 Docker VM, warm dashboard startup p50 was 6.3–6.5 ms across the generated fixtures; the 10,001-file fixture had 595 ms p50 Git analysis (three samples). See [benchmark methodology and measured results](docs/benchmarks.md). Measurements exclude provider inference and are specific to the tested environment; they do not predict performance on other systems.
+
 ## Development and contributing
 
 Install Git, Go 1.21 or newer, and Node.js for the frontend interaction tests. Node.js is a development dependency only.
 
 ```sh
+git clone https://github.com/BHAVIKA44/vibecodefolks.git
+cd vibecodefolks
+go build -o vibecodefolks .
+./vibecodefolks .
 gofmt -l .
 go vet ./...
 go test ./...
@@ -114,7 +146,7 @@ node --check web/quiz.js
 node --test tests/dashboard.test.cjs
 ```
 
-Contributions are welcome: open an issue to discuss substantial changes, then submit a focused pull request with tests and a description of how you verified it. CI is configured for Linux, macOS, and Windows. See the [Gemini evaluation](docs/gemini-evaluation.md), [beta testing notes](docs/beta-testing.md), [provider evaluation procedure](docs/provider-evaluation.md), and [future release plan](docs/release-plan.md). Provider quality remains an open question beyond the small samples tested.
+Contributions are welcome: open an issue to discuss substantial changes, then submit a focused pull request with tests and a description of how you verified it. CI is configured for Linux, macOS, and Windows. See the [Gemini evaluation](docs/gemini-evaluation.md), [beta testing notes](docs/beta-testing.md), [provider evaluation procedure](docs/provider-evaluation.md), and [release procedure](docs/releasing.md). Provider quality remains an open question beyond the small samples tested.
 
 ## License
 
