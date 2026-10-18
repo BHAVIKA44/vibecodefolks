@@ -11,6 +11,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+
+	"github.com/BHAVIKA44/vibecodefolks/internal/analysis"
+	"github.com/BHAVIKA44/vibecodefolks/internal/server"
 )
 
 //go:embed web/*
@@ -36,6 +39,10 @@ func main() {
 		log.Fatal("project path must be a directory")
 	}
 
+	if _, err := analysis.Discover(dir); err != nil {
+		log.Fatal(err)
+	}
+
 	web, err := fs.Sub(assets, "web")
 	if err != nil {
 		log.Fatal(err)
@@ -49,7 +56,7 @@ func main() {
 	if err := openBrowser(url); err != nil {
 		log.Printf("Could not open browser: %v; open %s manually", err, url)
 	}
-	log.Fatal(http.Serve(listener, http.FileServer(http.FS(web))))
+	log.Fatal(http.Serve(listener, server.Handler(dir, web)))
 }
 
 func openBrowser(url string) error {
