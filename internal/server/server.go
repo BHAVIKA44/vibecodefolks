@@ -129,6 +129,37 @@ func Handler(dir string, assets fs.FS, host string) http.Handler {
 		}
 		writeJSON(w, map[string]any{"explanation": result, "evidence": p.evidence, "snapshot": p.snapshot, "captured_at": p.captured.UTC()})
 	})
+	mux.HandleFunc("/api/quiz/fresh", func(w http.ResponseWriter, r *http.Request) {
+		if !method(w, r, "POST") || !jsonRequest(w, r) {
+			return
+		}
+		var in struct {
+			Snapshot string `json:"snapshot"`
+		}
+		dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024))
+		dec.DisallowUnknownFields()
+		if dec.Decode(&in) != nil || len(in.Snapshot) != 64 {
+			writeError(w, http.StatusBadRequest, "Invalid snapshot")
+			return
+		}
+		var extra any
+		if dec.Decode(&extra) != io.EOF {
+			writeError(w, http.StatusBadRequest, "Invalid snapshot")
+			return
+		}
+		ev, err := analysis.Collect(dir)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "Could not check the current evidence snapshot")
+			return
+		}
+		data, err := json.Marshal(ev)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "Could not check the current evidence snapshot")
+			return
+		}
+		digest := sha256.Sum256(data)
+		writeJSON(w, map[string]bool{"fresh": hex.EncodeToString(digest[:]) == in.Snapshot})
+	})
 	mux.Handle("/", http.FileServer(http.FS(assets)))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")

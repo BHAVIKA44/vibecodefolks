@@ -11,6 +11,7 @@ let requestController = null;
 let generation = 0;
 async function refresh() {
   generation += 1;
+  clearQuiz();
   if (requestController) requestController.abort();
   pending = null;
   element('consent-panel').hidden = true;
@@ -77,6 +78,7 @@ function showExplanation(result) {
   const container = element('explanation-content');
   container.replaceChildren();
   const e = result.explanation;
+  prepareQuiz(result);
   element('snapshot').textContent = `${e.scope} · captured ${new Date(result.captured_at).toLocaleString()} · ${result.snapshot.slice(0, 12)}`;
   renderGraph(e.graph, result.evidence);
   container.append(text('h3', 'Summary'), text('p', e.summary, 'muted'));
@@ -125,6 +127,7 @@ async function sendExplanation(consent) {
 }
 element('explain').addEventListener('click', async () => {
   element('explain').disabled = true;
+  clearQuiz();
   element('explanation').hidden = true;
   element('consent').checked = false;
   element('explain-status').textContent = 'Collecting bounded diff evidence…';
@@ -150,4 +153,5 @@ element('send-evidence').addEventListener('click', () => {
 element('cancel-consent').addEventListener('click', () => { pending = null; element('consent-panel').hidden = true; element('explain-status').textContent = 'Canceled; no evidence was sent.'; element('explain').disabled = false; });
 element('cancel-request').addEventListener('click', () => requestController?.abort());
 
+element('quiz-start').addEventListener('click', startQuiz);
 refresh();

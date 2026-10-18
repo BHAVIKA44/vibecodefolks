@@ -92,7 +92,8 @@ func TestConsentAndOrigin(t *testing.T) {
 		t.Fatalf("prepare %d %s", r.Code, r.Body.String())
 	}
 	var prep struct {
-		Token string `json:"token"`
+		Token    string `json:"token"`
+		Snapshot string `json:"snapshot"`
 	}
 	if err := json.Unmarshal(r.Body.Bytes(), &prep); err != nil || prep.Token == "" {
 		t.Fatalf("prepare: %s", r.Body.String())
@@ -100,6 +101,21 @@ func TestConsentAndOrigin(t *testing.T) {
 	if calls.Load() != 0 {
 		t.Fatal("preparation contacted provider")
 	}
+	r = request("POST", "/api/quiz/fresh", `{"snapshot":"`+prep.Snapshot+`"}`, "http://127.0.0.1:8888", "127.0.0.1:8888")
+	if r.Code != 200 || !strings.Contains(r.Body.String(), `"fresh":true`) {
+		t.Fatalf("snapshot fresh: %d %s", r.Code, r.Body.String())
+	}
+	if err := os.WriteFile(filepath.Join(d, "hello.go"), []byte("package changed\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	r = request("POST", "/api/quiz/fresh", `{"snapshot":"`+prep.Snapshot+`"}`, "http://127.0.0.1:8888", "127.0.0.1:8888")
+	if r.Code != 200 || !strings.Contains(r.Body.String(), `"fresh":false`) {
+		t.Fatalf("snapshot stale: %d %s", r.Code, r.Body.String())
+	}
+	if calls.Load() != 0 {
+		t.Fatal("snapshot check contacted provider")
+	}
+
 	r = request("POST", "/api/explain", `{"token":"`+prep.Token+`","consent":false}`, "http://127.0.0.1:8888", "127.0.0.1:8888")
 	if r.Code != 200 || calls.Load() != 1 {
 		t.Fatalf("local explanation: %d %s", r.Code, r.Body.String())
