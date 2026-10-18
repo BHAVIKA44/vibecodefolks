@@ -34,3 +34,7 @@ jobs:
           node --check web/graph.js
           node --check web/quiz.js
           node --test tests/dashboard.test.cjs
+      - name: Test installer with local fixtures
+        if: runner.os != 'Windows'
+        shell: bash
+        run: sh tests/installer.sh

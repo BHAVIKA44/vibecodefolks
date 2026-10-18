@@ -1,0 +1,263 @@
+{
+  "machine": {
+    "os": "Linux-6.12.76-linuxkit-aarch64-with-glibc2.41",
+    "architecture": "aarch64",
+    "cpu": "",
+    "go": "go version go1.25.14 linux/arm64",
+    "git": "git version 2.47.3"
+  },
+  "binary_bytes": 6619320,
+  "startup_iterations": 20,
+  "analysis_iterations": 3,
+  "fixtures": {
+    "small": {
+      "tracked_files": 101,
+      "changed_files": 5,
+      "startup_ms": {
+        "n": 20,
+        "min": 6.225000000000591,
+        "p50": 6.394688000000315,
+        "p95": 7.046583000004603,
+        "max": 19.337333999999373
+      },
+      "http_changes_ms": {
+        "n": 3,
+        "min": 20.7840420000025,
+        "p50": 21.702833000006194,
+        "p95": 22.664540999983274,
+        "max": 22.664540999983274
+      },
+      "probe": {
+        "discovery": {
+          "n": 3,
+          "min": 2.756542,
+          "p50": 2.773292,
+          "p95": 2.917375,
+          "max": 2.917375
+        },
+        "analysis": {
+          "n": 3,
+          "min": 19.73175,
+          "p50": 19.800583,
+          "p95": 20.080167,
+          "max": 20.080167
+        },
+        "evidence": {
+          "n": 3,
+          "min": 21.444958,
+          "p50": 21.5905,
+          "p95": 21.724292,
+          "max": 21.724292
+        }
+      },
+      "allocation_bytes_median": {
+        "discovery": 170752,
+        "analysis": 1060048,
+        "evidence": 1146440
+      },
+      "allocations_median": {
+        "discovery": 462,
+        "analysis": 2700,
+        "evidence": 2992
+      },
+      "server_rss_kib_idle": [
+        12084,
+        10028,
+        10168
+      ],
+      "server_rss_kib_changes_peak_sampled": [
+        12084,
+        10028,
+        10168
+      ],
+      "server_rss_kib_evidence_peak_sampled": [
+        12084,
+        10028,
+        10168
+      ],
+      "clean_probe": {
+        "analysis": {
+          "allocated_bytes": 694032,
+          "allocations": 1798,
+          "ms": 12.412417
+        },
+        "discovery": {
+          "allocated_bytes": 170912,
+          "allocations": 463,
+          "ms": 2.75775
+        },
+        "evidence": {
+          "allocated_bytes": 815392,
+          "allocations": 2228,
+          "ms": 15.241583
+        }
+      }
+    },
+    "medium": {
+      "tracked_files": 1001,
+      "changed_files": 30,
+      "startup_ms": {
+        "n": 20,
+        "min": 6.204916000001504,
+        "p50": 6.482875499997931,
+        "p95": 7.182624999984455,
+        "max": 7.902207999990196
+      },
+      "http_changes_ms": {
+        "n": 3,
+        "min": 74.54762500000811,
+        "p50": 74.85879199998635,
+        "p95": 75.18320799999856,
+        "max": 75.18320799999856
+      },
+      "probe": {
+        "discovery": {
+          "n": 3,
+          "min": 2.7915,
+          "p50": 2.859083,
+          "p95": 2.886042,
+          "max": 2.886042
+        },
+        "analysis": {
+          "n": 3,
+          "min": 72.509208,
+          "p50": 72.572542,
+          "p95": 73.845,
+          "max": 73.845
+        },
+        "evidence": {
+          "n": 3,
+          "min": 54.575667,
+          "p50": 54.714708,
+          "p95": 54.821959,
+          "max": 54.821959
+        }
+      },
+      "allocation_bytes_median": {
+        "discovery": 170960,
+        "analysis": 3261392,
+        "evidence": 2426120
+      },
+      "allocations_median": {
+        "discovery": 462,
+        "analysis": 8413,
+        "evidence": 6507
+      },
+      "server_rss_kib_idle": [
+        12076,
+        11180,
+        10032
+      ],
+      "server_rss_kib_changes_peak_sampled": [
+        12752,
+        14496,
+        12748
+      ],
+      "server_rss_kib_evidence_peak_sampled": [
+        13312,
+        14896,
+        15312
+      ],
+      "clean_probe": {
+        "analysis": {
+          "allocated_bytes": 690720,
+          "allocations": 1784,
+          "ms": 13.590125
+        },
+        "discovery": {
+          "allocated_bytes": 170752,
+          "allocations": 462,
+          "ms": 2.853167
+        },
+        "evidence": {
+          "allocated_bytes": 891504,
+          "allocations": 2239,
+          "ms": 16.171667
+        }
+      }
+    },
+    "large": {
+      "tracked_files": 10001,
+      "changed_files": 150,
+      "startup_ms": {
+        "n": 20,
+        "min": 6.147291999980098,
+        "p50": 6.274000499999488,
+        "p95": 6.6487499999823285,
+        "max": 7.52916700000128
+      },
+      "http_changes_ms": {
+        "n": 3,
+        "min": 555.7547509999949,
+        "p50": 561.3552079999806,
+        "p95": 592.9968339999903,
+        "max": 592.9968339999903
+      },
+      "probe": {
+        "discovery": {
+          "n": 3,
+          "min": 2.830292,
+          "p50": 2.959625,
+          "p95": 3.035708,
+          "max": 3.035708
+        },
+        "analysis": {
+          "n": 3,
+          "min": 549.63425,
+          "p50": 594.780042,
+          "p95": 651.878333,
+          "max": 651.878333
+        },
+        "evidence": {
+          "n": 3,
+          "min": 111.162417,
+          "p50": 115.531084,
+          "p95": 115.932958,
+          "max": 115.932958
+        }
+      },
+      "allocation_bytes_median": {
+        "discovery": 170912,
+        "analysis": 13357048,
+        "evidence": 2511848
+      },
+      "allocations_median": {
+        "discovery": 463,
+        "analysis": 35514,
+        "evidence": 6742
+      },
+      "server_rss_kib_idle": [
+        10040,
+        10036,
+        12076
+      ],
+      "server_rss_kib_changes_peak_sampled": [
+        13180,
+        14904,
+        15384
+      ],
+      "server_rss_kib_evidence_peak_sampled": [
+        13112,
+        15080,
+        15440
+      ],
+      "clean_probe": {
+        "analysis": {
+          "allocated_bytes": 694736,
+          "allocations": 1795,
+          "ms": 28.129334
+        },
+        "discovery": {
+          "allocated_bytes": 170608,
+          "allocations": 462,
+          "ms": 2.967042
+        },
+        "evidence": {
+          "allocated_bytes": 889536,
+          "allocations": 2234,
+          "ms": 27.495375
+        }
+      }
+    }
+  }
+}
