@@ -15,3 +15,26 @@ h2 { font-size: 27px; letter-spacing: -.03em; margin: 12px 0; }
 .badge { display: inline-block; margin-top: 26px; padding: 8px 12px; border-radius: 999px; background: #292732; color: #c8bfdf; font-size: 12px; }
 footer { margin-top: 36px; color: #81818f; font-size: 12px; }
 footer span { padding: 0 7px; color: #b9a0ff; }
+.dashboard { margin-top: 60px; padding: 30px; border: 1px solid #35333f; border-radius: 18px; background: #1b1b23; }
+.dashboard-head { display: flex; justify-content: space-between; align-items: center; gap: 20px; }
+.dashboard-head h2 { margin: 8px 0; }
+.dashboard-head .label { margin: 0; color: #b9a0ff; }
+.muted, .hint { color: #adadb9; line-height: 1.5; }
+.dashboard-head .muted { margin: 0; }
+button { border: 1px solid #524b65; border-radius: 9px; background: #302a40; color: #eeeef2; padding: 10px 15px; font: inherit; cursor: pointer; white-space: nowrap; }
+button:disabled { opacity: .6; cursor: wait; }
+button:focus-visible { outline: 2px solid #cdbdff; outline-offset: 3px; }
+.dashboard .badge { margin-top: 25px; }
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 25px 0; }
+.stats div { background: #25242e; border-radius: 10px; padding: 16px; }
+.stats strong, .stats span { display: block; }
+.stats strong { font-size: 24px; }
+.stats span { font-size: 12px; color: #aaa9b7; margin-top: 4px; }
+.files { padding: 0; list-style: none; }
+.files li { display: flex; justify-content: space-between; align-items: center; gap: 15px; border-top: 1px solid #35333f; padding: 16px 0; }
+.path, .previous { overflow-wrap: anywhere; }
+.previous, .file-stats, .hint { color: #aaa9b7; font-size: 12px; }
+.file-meta { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.status { color: #d5c9fb; background: #302a40; border-radius: 6px; padding: 5px 8px; font-size: 11px; text-transform: capitalize; }
+.hint { margin: 28px 0 0; }
+@media (max-width: 600px) { main { padding: 40px 18px; } .dashboard { padding: 20px; } .stats { grid-template-columns: 1fr; } .files li { align-items: flex-start; flex-direction: column; } }

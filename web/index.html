@@ -12,12 +12,13 @@
     <div class="eyebrow"><span class="dot"></span> LOCAL DASHBOARD</div>
     <h1>VibeCodeFolks<span>.</span></h1>
     <p class="tagline">AI wrote it. Do you understand it?</p>
-    <section class="placeholder" aria-labelledby="placeholder-title">
-      <div class="icon" aria-hidden="true">&lt;/&gt;</div>
-      <p class="label">YOUR CODE, EXPLAINED</p>
-      <h2 id="placeholder-title">The big picture is coming.</h2>
-      <p>Future code-change visualizations will live here, helping you see what changed and how it fits together.</p>
-      <span class="badge">Coming in a future milestone</span>
+    <section class="dashboard" aria-labelledby="dashboard-title">
+      <div class="dashboard-head"><div><p class="label">GIT CHANGE EVIDENCE</p><h2 id="dashboard-title">What changed</h2><p id="repository" class="muted">Loading repository…</p></div><button id="refresh" type="button">↻ Refresh</button></div>
+      <p id="scope" class="badge" hidden></p>
+      <div class="stats" aria-label="Change statistics"><div><strong id="count">—</strong><span>Changed files</span></div><div><strong id="added">—</strong><span>Lines added</span></div><div><strong id="deleted">—</strong><span>Lines deleted</span></div></div>
+      <p id="message" class="muted" role="status" aria-live="polite"></p>
+      <ul id="files" class="files"></ul>
+      <p class="hint">File changes are Git evidence. Function and relationship analysis is coming later.</p>
     </section>
     <footer>Built for curious developers <span aria-hidden="true">✳</span> Runs locally</footer>
   </main>
