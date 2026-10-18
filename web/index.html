@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>VibeCodeFolks</title>
   <link rel="stylesheet" href="/style.css">
+  <script src="/graph.js" defer></script>
   <script src="/app.js" defer></script>
 </head>
 <body>
@@ -22,7 +23,7 @@
       <p id="explain-status" class="muted" role="status" aria-live="polite"></p>
       <section id="consent-panel" class="consent-panel" hidden aria-labelledby="consent-title"><h3 id="consent-title">Review before sending</h3><p id="privacy-info" class="muted"></p><div id="preview"></div><p id="skipped" class="muted"></p><label id="consent-label" class="consent-label"><input id="consent" type="checkbox"> I consent to sending this evidence to the provider shown above.</label><div class="actions"><button id="send-evidence" type="button">Send and explain</button><button id="cancel-consent" type="button">Cancel</button></div></section>
       <button id="cancel-request" type="button" hidden>Cancel request</button>
-      <section id="explanation" hidden aria-live="polite"><p class="hint">AI-generated interpretations are not verified runtime behavior. References link to supplied evidence; they do not guarantee the claim is correct.</p><div id="explanation-content"></div></section>
+      <section id="explanation" hidden aria-live="polite"><div class="flow-heading"><div><p class="label">CHANGE MAP</p><h2>Explore the change flow</h2><p id="snapshot" class="muted"></p></div><span class="flow-chip">Evidence snapshot</span></div><p id="graph-notice" class="graph-notice"></p><div class="graph-layout"><div class="graph-scroll" tabindex="0" aria-label="Scrollable change diagram"><svg id="change-graph" role="group" aria-label="Interactive change diagram"></svg></div><aside id="graph-detail" class="graph-detail" aria-live="polite"><p class="muted">Select a card or connection to see its evidence.</p></aside></div><p class="hint">AI-generated interpretations are not verified runtime behavior. References link to supplied evidence; they do not guarantee the claim is correct.</p><div id="explanation-content"></div></section>
     </section>
     <footer>Built for curious developers <span aria-hidden="true">✳</span> Runs locally</footer>
   </main>

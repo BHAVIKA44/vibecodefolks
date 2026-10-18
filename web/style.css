@@ -54,3 +54,28 @@ summary { cursor: pointer; overflow-wrap: anywhere; color: #d5c9fb; }
 #explanation li { color: #adadb9; margin: 8px 0; }
 [hidden] { display: none !important; }
 @media (max-width: 600px) { .explain-header { align-items: flex-start; flex-direction: column; } }
+.flow-heading { margin-top: 36px; display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.flow-heading h2 { font-size: 24px; }
+.flow-heading .label { color: #b9a0ff; margin: 0; }
+.flow-heading .muted { font-size: 12px; margin: 0; overflow-wrap: anywhere; }
+.flow-chip { font-size: 11px; border: 1px solid #54476f; color: #c5b4ee; border-radius: 999px; padding: 7px 10px; white-space: nowrap; }
+.graph-notice { color: #c1b2dd; font-size: 13px; line-height: 1.5; }
+.graph-layout { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(230px, 1fr); border: 1px solid #3a3647; border-radius: 14px; overflow: hidden; min-height: 270px; }
+.graph-scroll { overflow: auto; background-color: #15151d; background-image: radial-gradient(#373443 1px, transparent 1px); background-size: 18px 18px; }
+.graph-scroll svg { display: block; min-height: 200px; }
+.graph-detail { padding: 20px; background: #22212c; overflow-wrap: anywhere; }
+.graph-detail h3 { margin: 8px 0 10px !important; font-size: 19px; }
+.graph-detail h4 { margin: 20px 0 4px !important; font-size: 12px; color: #d6d2e0; }
+.graph-detail p { margin: 7px 0; font-size: 13px; }
+.detail-label { font-size: 10px !important; font-weight: 700; letter-spacing: .12em; color: #b9a0ff; }
+.node-badge { font-size: 10px; text-transform: uppercase; letter-spacing: .1em; color: #c3baea; background: #373044; border-radius: 4px; padding: 4px 6px; }
+.node-badge.added { color: #a8ebbc; }.node-badge.removed { color: #f2a8b0; }
+.graph-warning { color: #d2bf8d; }
+.graph-node { cursor: pointer; outline: none; }
+.graph-node rect { fill: #272530; stroke: #74658d; stroke-width: 1.5; }
+.graph-node.added rect { stroke: #77bd93; }.graph-node.removed rect { stroke: #cc7c89; }
+.graph-node:hover rect, .graph-node:focus rect { stroke: #e2d9ff; stroke-width: 3; }
+.svg-label { fill: #f1eff7; font-size: 13px; font-weight: 600; }.svg-status { fill: #b9a0ff; font-size: 9px; font-weight: 700; letter-spacing: 1.1px; }
+.graph-edge { cursor: pointer; outline: none; }.graph-edge line { stroke: #b5a4dc; stroke-width: 2.5; stroke-dasharray: 6 4; }.graph-edge:hover line, .graph-edge:focus line { stroke: #fff; stroke-width: 5; }
+@media (max-width: 760px) { .graph-layout { grid-template-columns: 1fr; }.graph-detail { border-top: 1px solid #3a3647; }.flow-heading { align-items: flex-start; flex-direction: column; } }
+.svg-edge-label { fill: #d8c9f3; font-size: 10px; paint-order: stroke; stroke: #15151d; stroke-width: 4px; stroke-linejoin: round; }
