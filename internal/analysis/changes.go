@@ -110,7 +110,9 @@ func applyStats(f *ChangedFile, s [2]string) {
 	f.Deleted = &d
 }
 
-func Analyze(dir string) (ChangeSet, error) {
+func Analyze(dir string) (ChangeSet, error) { return analyze(dir, false) }
+
+func analyze(dir string, evidenceOnly bool) (ChangeSet, error) {
 	info, err := Discover(dir)
 	if err != nil {
 		return ChangeSet{}, err
@@ -190,6 +192,10 @@ func Analyze(dir string) (ChangeSet, error) {
 			} else {
 				f.Details = "Line statistics unavailable"
 			}
+			if evidenceOnly {
+				result.Files = append(result.Files, *f)
+				continue
+			}
 			args := append(append([]string{}, command...), "--unified=0", "HEAD", "--", ":(literal)"+f.Path)
 			if f.PreviousPath != "" {
 				args = append(args, ":(literal)"+f.PreviousPath)
@@ -232,6 +238,10 @@ func Analyze(dir string) (ChangeSet, error) {
 		}
 		if !stat.Mode().IsRegular() {
 			f.Details = "Line statistics unavailable for non-regular file"
+			result.Files = append(result.Files, f)
+			continue
+		}
+		if evidenceOnly {
 			result.Files = append(result.Files, f)
 			continue
 		}

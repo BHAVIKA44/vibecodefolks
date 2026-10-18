@@ -18,7 +18,11 @@
       <div class="stats" aria-label="Change statistics"><div><strong id="count">—</strong><span>Changed files</span></div><div><strong id="added">—</strong><span>Lines added</span></div><div><strong id="deleted">—</strong><span>Lines deleted</span></div></div>
       <p id="message" class="muted" role="status" aria-live="polite"></p>
       <ul id="files" class="files"></ul>
-      <p class="hint">File changes are Git evidence. Function and relationship analysis is coming later.</p>
+      <div class="explain-header"><div><h2>Understand the changes</h2><p class="muted">Optional AI explanations grounded in selected diff evidence.</p></div><button id="explain" type="button">Explain Changes</button></div>
+      <p id="explain-status" class="muted" role="status" aria-live="polite"></p>
+      <section id="consent-panel" class="consent-panel" hidden aria-labelledby="consent-title"><h3 id="consent-title">Review before sending</h3><p id="privacy-info" class="muted"></p><div id="preview"></div><p id="skipped" class="muted"></p><label id="consent-label" class="consent-label"><input id="consent" type="checkbox"> I consent to sending this evidence to the provider shown above.</label><div class="actions"><button id="send-evidence" type="button">Send and explain</button><button id="cancel-consent" type="button">Cancel</button></div></section>
+      <button id="cancel-request" type="button" hidden>Cancel request</button>
+      <section id="explanation" hidden aria-live="polite"><p class="hint">AI-generated interpretations are not verified runtime behavior. References link to supplied evidence; they do not guarantee the claim is correct.</p><div id="explanation-content"></div></section>
     </section>
     <footer>Built for curious developers <span aria-hidden="true">✳</span> Runs locally</footer>
   </main>
