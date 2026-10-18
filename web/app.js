@@ -25,6 +25,7 @@ async function refresh() {
   element('files').replaceChildren();
   element('scope').hidden = true;
   for (const id of ['count', 'added', 'deleted']) element(id).textContent = '—';
+  let loaded = false;
   try {
     const response = await fetch('/api/changes', { cache: 'no-store' });
     const data = await response.json();
@@ -52,10 +53,11 @@ async function refresh() {
       item.append(paths, meta);
       element('files').append(item);
     }
+    loaded = data.total_files > 0;
   } catch (error) {
     element('repository').textContent = 'Repository unavailable';
     element('message').textContent = error.message || 'Unable to analyze this repository.';
-  } finally { button.disabled = false; element('explain').disabled = false; }
+  } finally { button.disabled = false; element('explain').disabled = !loaded; }
 }
 element('refresh').addEventListener('click', refresh);
 async function post(url, data, signal) {
