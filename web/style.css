@@ -1,0 +1,17 @@
+:root { font-family: system-ui, -apple-system, sans-serif; color: #eeeef2; background: #101116; color-scheme: dark; }
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; background: radial-gradient(ellipse at top right, #28233c, transparent 50%), #101116; }
+main { max-width: 1040px; margin: auto; padding: 72px 32px 28px; }
+.eyebrow, .label { font-size: 11px; letter-spacing: .16em; font-weight: 700; color: #a6a6b5; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #a8ebbc; margin-right: 8px; }
+h1 { font-size: clamp(42px, 7vw, 68px); letter-spacing: -.06em; margin: 30px 0 5px; }
+h1 span { color: #b9a0ff; }
+.tagline { color: #c1c0ca; font-size: 19px; margin: 0; }
+.placeholder { margin-top: 68px; padding: 58px 36px; text-align: center; border: 1px solid #35333f; border-radius: 18px; background: #1b1b23; }
+.icon { display: inline-grid; place-items: center; width: 64px; height: 64px; border-radius: 18px; background: #302a40; color: #cdbdff; font-size: 24px; font-weight: 700; }
+.label { margin-top: 26px; color: #b9a0ff; }
+h2 { font-size: 27px; letter-spacing: -.03em; margin: 12px 0; }
+.placeholder > p:not(.label) { color: #adadb9; line-height: 1.6; max-width: 470px; margin: 0 auto; }
+.badge { display: inline-block; margin-top: 26px; padding: 8px 12px; border-radius: 999px; background: #292732; color: #c8bfdf; font-size: 12px; }
+footer { margin-top: 36px; color: #81818f; font-size: 12px; }
+footer span { padding: 0 7px; color: #b9a0ff; }
