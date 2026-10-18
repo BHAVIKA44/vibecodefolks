@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -12,7 +13,7 @@ func gitTest(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	c := exec.Command("git", args...)
 	c.Dir = dir
-	c.Env = append(filteredEnv(), "HOME="+t.TempDir(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=test@example.com", "GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=test@example.com")
+	c.Env = append(filteredEnv(), "HOME="+t.TempDir(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=test@example.com", "GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=test@example.com")
 	if out, err := c.CombinedOutput(); err != nil {
 		t.Fatalf("git %v: %v: %s", args, err, out)
 	}
@@ -141,6 +142,10 @@ func TestSpecialNamesAndUnavailableGit(t *testing.T) {
 	gitTest(t, d, "add", ".")
 	gitTest(t, d, "commit", "-m", "base")
 	name := ":odd\tline\n.py"
+	if runtime.GOOS == "windows" {
+		// Windows forbids colons, tabs, and newlines in filenames; still exercise Unicode and spaces.
+		name = "odd name é.py"
+	}
 	write(t, d, name, []byte("text\n"))
 	c, err := Analyze(d)
 	if err != nil {
