@@ -6,7 +6,18 @@ const text = (tag, value, className) => {
   return node;
 };
 
+let pending = null;
+let requestController = null;
+let generation = 0;
 async function refresh() {
+  generation += 1;
+  if (requestController) requestController.abort();
+  pending = null;
+  element('consent-panel').hidden = true;
+  element('explanation').hidden = true;
+  element('cancel-request').hidden = true;
+  element('explain').disabled = false;
+  element('explain-status').textContent = 'Previous explanation cleared. Refresh captures a new Git view.';
   const button = element('refresh');
   button.disabled = true;
   element('message').textContent = 'Analyzing changes…';
@@ -46,10 +57,6 @@ async function refresh() {
   } finally { button.disabled = false; }
 }
 element('refresh').addEventListener('click', refresh);
-refresh();
-
-let pending = null;
-let requestController = null;
 async function post(url, data, signal) {
   const response = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data), signal});
   const result = await response.json();
@@ -70,6 +77,8 @@ function showExplanation(result) {
   const container = element('explanation-content');
   container.replaceChildren();
   const e = result.explanation;
+  element('snapshot').textContent = `${e.scope} · captured ${new Date(result.captured_at).toLocaleString()} · ${result.snapshot.slice(0, 12)}`;
+  renderGraph(e.graph, result.evidence);
   container.append(text('h3', 'Summary'), text('p', e.summary, 'muted'));
   function group(title, findings) {
     container.append(text('h3', title));
@@ -101,22 +110,29 @@ async function sendExplanation(consent) {
   element('consent-panel').hidden = true;
   element('explain-status').textContent = 'Waiting for the AI provider…';
   element('cancel-request').hidden = false;
-  requestController = new AbortController();
+  const currentGeneration = generation;
+  const token = pending.token;
+  const controller = new AbortController();
+  requestController = controller;
   try {
-    const result = await post('/api/explain', {token: pending.token, consent}, requestController.signal);
+    const result = await post('/api/explain', {token, consent}, controller.signal);
+    if (currentGeneration !== generation) return;
     showExplanation(result);
     element('explain-status').textContent = 'Explanation ready.';
   } catch (error) {
-    element('explain-status').textContent = error.name === 'AbortError' ? 'Request canceled.' : error.message;
-  } finally { pending = null; requestController = null; element('cancel-request').hidden = true; element('explain').disabled = false; }
+    if (currentGeneration === generation) element('explain-status').textContent = error.name === 'AbortError' ? 'Request canceled.' : error.message;
+  } finally { if (currentGeneration === generation) { pending = null; requestController = null; element('cancel-request').hidden = true; element('explain').disabled = false; } }
 }
 element('explain').addEventListener('click', async () => {
   element('explain').disabled = true;
   element('explanation').hidden = true;
   element('consent').checked = false;
   element('explain-status').textContent = 'Collecting bounded diff evidence…';
+  const currentGeneration = generation;
   try {
-    pending = await post('/api/explain/prepare', {});
+    const prepared = await post('/api/explain/prepare', {});
+    if (currentGeneration !== generation) return;
+    pending = prepared;
     element('consent-title').textContent = pending.local ? 'Review evidence for your local provider' : 'Review before sending';
     element('consent-label').hidden = pending.local;
     element('send-evidence').textContent = pending.local ? 'Explain locally' : 'Send and explain';
@@ -125,7 +141,7 @@ element('explain').addEventListener('click', async () => {
     element('skipped').textContent = pending.skipped.length ? `Skipped: ${pending.skipped.map((f) => `${f.path} (${f.reason})`).join(', ')}` : 'No files were skipped by the evidence filter.';
     element('consent-panel').hidden = false;
     element('explain-status').textContent = pending.local ? 'Review the evidence, then choose Explain locally.' : 'Consent required before sending code to a remote provider.';
-  } catch (error) { element('explain-status').textContent = error.message; element('explain').disabled = false; }
+  } catch (error) { if (currentGeneration === generation) { element('explain-status').textContent = error.message; element('explain').disabled = false; } }
 });
 element('send-evidence').addEventListener('click', () => {
   if (!pending.local && !element('consent').checked) { element('explain-status').textContent = 'Please check the consent box before sending.'; return; }
@@ -133,3 +149,5 @@ element('send-evidence').addEventListener('click', () => {
 });
 element('cancel-consent').addEventListener('click', () => { pending = null; element('consent-panel').hidden = true; element('explain-status').textContent = 'Canceled; no evidence was sent.'; element('explain').disabled = false; });
 element('cancel-request').addEventListener('click', () => requestController?.abort());
+
+refresh();

@@ -2,6 +2,7 @@ package server
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"io"
@@ -19,6 +20,8 @@ type prepared struct {
 	evidence analysis.Evidence
 	config   explain.Config
 	expires  time.Time
+	snapshot string
+	captured time.Time
 }
 type state struct {
 	mu       sync.Mutex
@@ -75,13 +78,16 @@ func Handler(dir string, assets fs.FS, host string) http.Handler {
 			writeError(w, http.StatusTooManyRequests, "Too many pending requests; try again later")
 			return
 		}
-		s.requests[token] = prepared{ev, cfg, now.Add(5 * time.Minute)}
+		snapshotData, _ := json.Marshal(ev)
+		digest := sha256.Sum256(snapshotData)
+		snapshot := hex.EncodeToString(digest[:])
+		s.requests[token] = prepared{evidence: ev, config: cfg, expires: now.Add(5 * time.Minute), snapshot: snapshot, captured: now}
 		s.mu.Unlock()
 		files := make([]string, 0, len(ev.Files))
 		for _, f := range ev.Files {
 			files = append(files, f.Path)
 		}
-		writeJSON(w, map[string]any{"token": token, "endpoint": cfg.PublicEndpoint(), "model": cfg.Model, "local": cfg.Local, "scope": ev.Scope, "files": files, "evidence": ev, "skipped": ev.Skipped, "limitations": ev.Limitations, "expires_in_seconds": 300})
+		writeJSON(w, map[string]any{"token": token, "endpoint": cfg.PublicEndpoint(), "model": cfg.Model, "local": cfg.Local, "scope": ev.Scope, "files": files, "evidence": ev, "skipped": ev.Skipped, "limitations": ev.Limitations, "expires_in_seconds": 300, "snapshot": snapshot, "captured_at": now.UTC()})
 	})
 	mux.HandleFunc("/api/explain", func(w http.ResponseWriter, r *http.Request) {
 		if !method(w, r, "POST") || !jsonRequest(w, r) {
@@ -121,7 +127,7 @@ func Handler(dir string, assets fs.FS, host string) http.Handler {
 			writeError(w, http.StatusBadGateway, err.Error())
 			return
 		}
-		writeJSON(w, map[string]any{"explanation": result, "evidence": p.evidence})
+		writeJSON(w, map[string]any{"explanation": result, "evidence": p.evidence, "snapshot": p.snapshot, "captured_at": p.captured.UTC()})
 	})
 	mux.Handle("/", http.FileServer(http.FS(assets)))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

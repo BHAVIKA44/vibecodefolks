@@ -44,6 +44,14 @@ The server collects unified diff hunks with three lines of surrounding context, 
 
 Git filter and filesystem monitor commands are disabled during analysis. The server listens only on `127.0.0.1`, checks the request host and origin, and does not accept arbitrary project paths via the API. It is designed for a trusted local machine, not as a multi-user server.
 
+### Visual change flows
+
+After the explanation is ready, the change map uses the same evidence snapshot to show suggested components and connections. Select a card or arrow with the mouse or keyboard to see its description, uncertainty, and supporting diff excerpts. For example, a change to `web/login.js` and `api/auth.py` might show **Login form → Authentication API** when both files contain relevant evidence. The arrow is an AI inference; matching paths do not prove the request works at runtime. The screenshot below uses a scripted mock provider and a sample repository.
+
+![Sample change flow using a mock provider](docs/change-flow.png)
+
+The snapshot timestamp and identifier describe the evidence sent to the provider. Refreshing Git changes clears the previous explanation and diagram; run **Explain Changes** again to analyze the new snapshot. If the provider omits a graph or returns an invalid one, the explanation remains available and the map shows disconnected file cards based on the collected evidence. It does not invent connections. Currently all displayed connections are AI inferences; no deterministic relationship extraction is performed. The map accepts at most 20 nodes and 30 edges, so larger changes may be summarized or fall back to file cards. Scroll the diagram horizontally for wide flows.
+
 ### Example output
 
 For a diff that adds a `validateEmail` function, an explanation might say:
@@ -56,7 +64,7 @@ AI output is an interpretation, not a test result. The server checks that each f
 
 ## Limitations
 
-Evidence is language-independent text, not a full parser for every language or framework. Only changed diff context is supplied; unchanged files, large changes, pure renames without textual hunks, binary content, submodules, symlinks, and other skipped material may be missing. The provider may fail, return invalid JSON or invalid references, or misunderstand valid evidence; invalid structured responses are rejected. Filters are heuristic, and files can change during analysis. Unmerged conflicts must be resolved first. The app does not execute or test the project and cannot confirm runtime behavior. Diagrams and quizzes are not implemented.
+Evidence is language-independent text, not a full parser for every language or framework. Only changed diff context is supplied; unchanged files, large changes, pure renames without textual hunks, binary content, submodules, symlinks, and other skipped material may be missing. The provider may fail, return invalid JSON or invalid references, or misunderstand valid evidence; invalid structured responses are rejected. Filters are heuristic, and files can change during analysis. Unmerged conflicts must be resolved first. The app does not execute or test the project and cannot confirm runtime behavior. Citations establish that the referenced lines exist in the supplied evidence, not that an inferred relationship is correct. Quizzes are not implemented.
 
 ## License
 
