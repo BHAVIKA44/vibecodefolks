@@ -2,32 +2,44 @@
 
 **AI wrote it. Do you understand it?**
 
-AI coding tools can change an application faster than a developer can inspect it. VibeCodeFolks helps you slow down and understand those changes: it shows Git changes, optionally asks an OpenAI-compatible provider for an evidence-backed explanation, and presents a change map and quiz. It runs locally as a single Go executable.
+VibeCodeFolks is a local tool for understanding code changes made by AI coding agents. Point it at a Git repository, review the changes, and ask an AI provider to explain the evidence. Explore a change map and check your understanding with a short quiz.
+
+One Go executable. A local browser dashboard. No database, frontend runtime, or account required.
+
+> **Early beta:** AI explanations, connections, and quiz answers can be wrong. Review the cited code and run your own tests. Start with repositories that contain no sensitive information.
 
 ![Local Git dashboard](docs/dashboard.png)
 
 The dashboard screenshot shows a fictional sample repository; the graph and quiz screenshots below use a scripted mock provider.
 
-## Get started
+## Quick start
 
-Install Git and Go 1.21 or later. From this project directory:
-
-```sh
-go run . /path/to/project
-```
-
-The argument can point anywhere inside a Git repository and defaults to the current directory. The CLI opens a local browser dashboard; if it cannot, open the printed URL. Stop the server with Ctrl+C.
+Install Git and Go 1.21 or later, then build from source:
 
 ```sh
-go vet ./...
-go test ./...
+git clone https://github.com/BHAVIKA44/vibecodefolks.git
+cd vibecodefolks
 go build -o vibecodefolks .
 ./vibecodefolks /path/to/project
 ```
 
+The project path can point anywhere inside a Git repository. Omit it to inspect the current directory. The CLI opens a dashboard on `127.0.0.1`; if the browser does not open, visit the printed URL. Stop the server with Ctrl+C.
+
+```sh
+# Or run directly from the VibeCodeFolks checkout
+go run . /path/to/project
+```
+
 The dashboard assets are embedded in the executable. Node.js, Python, Electron, a database, and accounts are not required.
 
-## Current capabilities
+## How it works
+
+1. An AI coding agent changes your repository.
+2. Run VibeCodeFolks and inspect the Git changes in your browser.
+3. Configure an AI provider, review the evidence preview, and choose whether to send it.
+4. Explore the explanation and change map, then try the optional quiz.
+
+## Features
 
 - Inspect working-tree Git changes or, when clean, the last commit.
 - Review bounded code evidence before sending it to a configured provider.
@@ -102,7 +114,7 @@ node --check web/quiz.js
 node --test tests/dashboard.test.cjs
 ```
 
-Contributions are welcome: open an issue to discuss substantial changes, then submit a focused pull request with tests and a description of how you verified it. CI is configured for Linux, macOS, and Windows. See the [real-provider evaluation procedure](docs/provider-evaluation.md) and [future release plan](docs/release-plan.md). Real-provider quality validation remains pending.
+Contributions are welcome: open an issue to discuss substantial changes, then submit a focused pull request with tests and a description of how you verified it. CI is configured for Linux, macOS, and Windows. See the [Gemini evaluation](docs/gemini-evaluation.md), [beta testing notes](docs/beta-testing.md), [provider evaluation procedure](docs/provider-evaluation.md), and [future release plan](docs/release-plan.md). Provider quality remains an open question beyond the small samples tested.
 
 ## License
 
