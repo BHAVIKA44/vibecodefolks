@@ -79,3 +79,15 @@ summary { cursor: pointer; overflow-wrap: anywhere; color: #d5c9fb; }
 .graph-edge { cursor: pointer; outline: none; }.graph-edge line { stroke: #b5a4dc; stroke-width: 2.5; stroke-dasharray: 6 4; }.graph-edge:hover line, .graph-edge:focus line { stroke: #fff; stroke-width: 5; }
 @media (max-width: 760px) { .graph-layout { grid-template-columns: 1fr; }.graph-detail { border-top: 1px solid #3a3647; }.flow-heading { align-items: flex-start; flex-direction: column; } }
 .svg-edge-label { fill: #d8c9f3; font-size: 10px; paint-order: stroke; stroke: #15151d; stroke-width: 4px; stroke-linejoin: round; }
+.quiz-section { margin: 32px 0; padding: 24px; border: 1px solid #544b72; border-radius: 16px; background: linear-gradient(145deg, #282337, #1b1a25); }
+.quiz-section h2, .quiz-section h3 { margin-top: 8px; }
+.quiz-options { display: grid; gap: 10px; margin: 20px 0; }
+.quiz-options .quiz-option { width: 100%; text-align: left; white-space: normal; line-height: 1.45; }
+.quiz-options .quiz-option:disabled { opacity: .75; cursor: default; }
+.quiz-feedback { display: grid; gap: 10px; }
+.quiz-feedback:empty { display: none; }
+.quiz-feedback h4, .quiz-feedback p { margin: 0; }
+.quiz-feedback button { justify-self: start; margin-top: 8px; }
+.quiz-reaction { color: #d7c6ff; font-weight: 700; }
+.quiz-score { color: #d7c6ff; font-size: 1.5rem; font-weight: 700; }
+@media (max-width: 600px) { .quiz-section { padding: 18px; } }

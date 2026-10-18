@@ -52,6 +52,16 @@ After the explanation is ready, the change map uses the same evidence snapshot t
 
 The snapshot timestamp and identifier describe the evidence sent to the provider. Refreshing Git changes clears the previous explanation and diagram; run **Explain Changes** again to analyze the new snapshot. If the provider omits a graph or returns an invalid one, the explanation remains available and the map shows disconnected file cards based on the collected evidence. It does not invent connections. Currently all displayed connections are AI inferences; no deterministic relationship extraction is performed. The map accepts at most 20 nodes and 30 edges, so larger changes may be summarized or fall back to file cards. Scroll the diagram horizontally for wide flows.
 
+### Understanding quiz
+
+After an explanation is generated, choose **Okay bro, did you actually understand it? 💀** to practice with up to five multiple-choice questions about the supplied code evidence. The same AI request produces the explanation, diagram, and optional quiz; starting or retrying a quiz does not send code to the AI provider again. If the evidence or model response cannot support a quiz, the dashboard says so and the explanation remains available.
+
+Each answer receives immediate feedback, an AI-generated explanation, and expandable source references. The final score is the number of correct choices out of the questions presented. Answers and scores remain in the current browser session. Retry starts a new attempt with the same questions. The app checks the local evidence snapshot before starting or retrying; refresh clears the current quiz and score.
+
+![Understanding quiz with feedback from a scripted mock provider](docs/understanding-quiz.png)
+
+Questions and answer keys are AI interpretations. The server checks their format and cited lines, but cannot guarantee factual correctness or verify behavior at runtime. Review the cited code, and run appropriate tests. The score is a learning aid, not a certification.
+
 ### Example output
 
 For a diff that adds a `validateEmail` function, an explanation might say:
@@ -64,7 +74,7 @@ AI output is an interpretation, not a test result. The server checks that each f
 
 ## Limitations
 
-Evidence is language-independent text, not a full parser for every language or framework. Only changed diff context is supplied; unchanged files, large changes, pure renames without textual hunks, binary content, submodules, symlinks, and other skipped material may be missing. The provider may fail, return invalid JSON or invalid references, or misunderstand valid evidence; invalid structured responses are rejected. Filters are heuristic, and files can change during analysis. Unmerged conflicts must be resolved first. The app does not execute or test the project and cannot confirm runtime behavior. Citations establish that the referenced lines exist in the supplied evidence, not that an inferred relationship is correct. Quizzes are not implemented.
+Evidence is language-independent text, not a full parser for every language or framework. Only changed diff context is supplied; unchanged files, large changes, pure renames without textual hunks, binary content, submodules, symlinks, and other skipped material may be missing. The provider may fail, return invalid JSON or invalid references, or misunderstand valid evidence; invalid structured responses are rejected. Filters are heuristic, and files can change during analysis. Unmerged conflicts must be resolved first. The app does not execute or test the project and cannot confirm runtime behavior. Citations establish that the referenced lines exist in the supplied evidence, not that an inferred relationship is correct.
 
 ## License
 
