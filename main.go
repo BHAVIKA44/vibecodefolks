@@ -56,7 +56,7 @@ func main() {
 	if err := openBrowser(url); err != nil {
 		log.Printf("Could not open browser: %v; open %s manually", err, url)
 	}
-	log.Fatal(http.Serve(listener, server.Handler(dir, web)))
+	log.Fatal(http.Serve(listener, server.Handler(dir, web, listener.Addr().String())))
 }
 
 func openBrowser(url string) error {

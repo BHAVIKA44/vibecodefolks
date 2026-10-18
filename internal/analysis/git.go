@@ -49,13 +49,21 @@ type gitRepo struct{ root string }
 func run(dir string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", args...)
+	safe, err := safeGitArgs(dir, args)
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.CommandContext(ctx, "git", safe...)
 	cmd.Dir = dir
 	cmd.Env = append(cleanEnv(), "LC_ALL=C", "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0")
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
+	stdout := &limitedBuffer{limit: 8 * 1024 * 1024}
+	var stderr bytes.Buffer
+	cmd.Stdout = stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
+		if stdout.overflow {
+			return nil, errors.New("Git output exceeds size limit")
+		}
 		if ctx.Err() != nil {
 			return nil, fmt.Errorf("git timed out: %w", ctx.Err())
 		}
@@ -64,7 +72,7 @@ func run(dir string, args ...string) ([]byte, error) {
 		}
 		return nil, fmt.Errorf("git %s: %s", args[0], strings.TrimSpace(stderr.String()))
 	}
-	return stdout.Bytes(), nil
+	return stdout.b.Bytes(), nil
 }
 func cleanEnv() []string { return filteredEnv() }
 
@@ -107,10 +115,19 @@ func noIndex(dir string, option string, extraOrPath string, more ...string) ([]b
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", args...)
+	safe, err := safeGitArgs(dir, args)
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.CommandContext(ctx, "git", safe...)
 	cmd.Dir = dir
 	cmd.Env = append(cleanEnv(), "LC_ALL=C", "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0")
-	out, err := cmd.Output()
+	out := &limitedBuffer{limit: 8 * 1024 * 1024}
+	cmd.Stdout = out
+	err = cmd.Run()
+	if out.overflow {
+		return nil, errors.New("Git output exceeds size limit")
+	}
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
@@ -120,5 +137,39 @@ func noIndex(dir string, option string, extraOrPath string, more ...string) ([]b
 			return nil, err
 		}
 	}
-	return out, nil
+	return out.b.Bytes(), nil
+}
+
+// Disable repository-configured commands before Git inspects working files.
+func safeGitArgs(dir string, args []string) ([]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c := exec.CommandContext(ctx, "git", "-c", "core.fsmonitor=false", "config", "--null", "--name-only", "--get-regexp", `^filter\..*\.(clean|process|required)$`)
+	c.Dir = dir
+	c.Env = append(cleanEnv(), "LC_ALL=C", "GIT_TERMINAL_PROMPT=0")
+	out, err := c.Output()
+	if err != nil {
+		var ex *exec.ExitError
+		if !errors.As(err, &ex) || ex.ExitCode() != 1 {
+			if errors.Is(err, exec.ErrNotFound) {
+				return nil, errors.New("Git is not installed or not available on PATH")
+			}
+			return nil, errors.New("unable to safely inspect Git filter configuration")
+		}
+	}
+	names := map[string]bool{}
+	for _, key := range strings.Split(string(out), "\x00") {
+		if strings.HasPrefix(key, "filter.") {
+			if pos := strings.LastIndex(key, "."); pos > len("filter.") {
+				names[key[:pos]] = true
+			}
+		}
+	}
+	prefix := []string{"-c", "core.fsmonitor=false"}
+	for name := range names {
+		for _, opt := range []string{"clean=", "process=", "required=false"} {
+			prefix = append(prefix, "-c", name+"."+opt)
+		}
+	}
+	return append(prefix, args...), nil
 }
