@@ -12,6 +12,12 @@ let generation = 0;
 let snapshotEvidence = null;
 let changedFiles = [];
 let fileGroups = [];
+function clearGraph(notice = 'No current change flow. Generate an explanation to explore supported connections.') {
+  element('change-graph').replaceChildren();
+  element('graph-notice').textContent = notice;
+  const detail = element('graph-detail');
+  detail.replaceChildren(text('p', 'No current change flow. Read the overview and explore the changed files instead.', 'muted'));
+}
 function selectTab(name) {
   for (const tab of ['overview','code','flow','quiz']) {
     element(`panel-${tab}`).hidden = tab !== name;
@@ -59,6 +65,7 @@ async function refresh() {
   selectTab('overview'); element('overview-empty').hidden = false; element('quiz-empty').hidden = false;
   element('consent-panel').hidden = true;
   element('explanation').hidden = true;
+  clearGraph();
   element('cancel-request').hidden = true;
   element('explain').disabled = true;
   element('explain-status').textContent = 'Previous explanation cleared. Refresh captures a new Git view.';
@@ -171,6 +178,7 @@ element('explain').addEventListener('click', async () => {
   element('explain').disabled = true;
   clearQuiz();
   element('explanation').hidden = true;
+  clearGraph('Preparing a new explanation. The previous change flow has been cleared.');
   element('consent').checked = false;
   element('explain-status').textContent = 'Collecting bounded diff evidence…';
   const currentGeneration = generation;

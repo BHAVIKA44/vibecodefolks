@@ -182,3 +182,14 @@ test('unavailable graph is explicit and does not render generic file cards', () 
   assert.match(allText(elements.get('graph-detail')),/No verified change flow/);
   assert.equal(elements.get('change-graph').children.length,0);
 });
+
+test('a new explanation attempt clears a stale change flow before contacting the provider', async () => {
+  const fetch = url => url === '/api/changes' ? Promise.resolve(jsonResponse({...changes, total_files: 1})) : Promise.resolve({ok:false, json:async()=>({error:'Provider unavailable'})});
+  const {elements,load}=environment(fetch); load('graph.js'); load('quiz.js'); load('app.js');
+  await new Promise(resolve=>setImmediate(resolve));
+  elements.get('change-graph').append(new Element('g'));
+  elements.get('graph-notice').textContent = 'Old graph';
+  await elements.get('explain').listeners.click();
+  assert.equal(elements.get('change-graph').children.length,0);
+  assert.match(elements.get('graph-notice').textContent,/Preparing a new explanation/);
+});

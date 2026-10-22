@@ -157,15 +157,29 @@ func (p *ChatProvider) Explain(ctx context.Context, ev analysis.Evidence) (Expla
 		return Explanation{}, errors.New("AI provider returned an invalid response")
 	}
 	var result Explanation
+	content, err := structuredJSONObject(envelope.Choices[0].Message.Content)
+	if err != nil {
+		return Explanation{}, errors.New("AI returned malformed structured JSON")
+	}
 	var fields map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(envelope.Choices[0].Message.Content), &fields); err != nil || fields == nil {
+	if err := json.Unmarshal(content, &fields); err != nil || fields == nil {
+		return Explanation{}, errors.New("AI returned malformed structured JSON")
+	}
+	if _, reserved := fields["scope"]; reserved {
+		return Explanation{}, errors.New("AI returned malformed structured JSON")
+	}
+	if _, reserved := fields["limitations"]; reserved {
 		return Explanation{}, errors.New("AI returned malformed structured JSON")
 	}
 	graphRaw := fields["graph"]
 	quizRaw := fields["quiz"]
-	delete(fields, "quiz")
-	delete(fields, "graph")
-	textJSON, err := json.Marshal(fields)
+	textFields := map[string]json.RawMessage{}
+	for _, name := range []string{"summary", "changes", "impacts", "relationships", "uncertainties"} {
+		if value, ok := fields[name]; ok {
+			textFields[name] = value
+		}
+	}
+	textJSON, err := json.Marshal(textFields)
 	if err != nil {
 		return Explanation{}, errors.New("AI returned malformed structured JSON")
 	}
@@ -187,6 +201,27 @@ func (p *ChatProvider) Explain(ctx context.Context, ev analysis.Evidence) (Expla
 	result.Graph = &graph
 	result.Quiz = quizOrNil(quizRaw, ev)
 	return result, nil
+}
+
+// structuredJSONObject accepts the JSON object requested from a provider and the
+// common Markdown code fence some OpenAI-compatible providers still add. Unknown
+// top-level provider metadata is ignored; only allowlisted explanation fields are
+// decoded and every displayed finding still passes Validate below.
+func structuredJSONObject(content string) ([]byte, error) {
+	content = strings.TrimSpace(content)
+	if !strings.HasPrefix(content, "```") {
+		return []byte(content), nil
+	}
+	_, body, found := strings.Cut(content, "\n")
+	if !found {
+		return nil, errors.New("missing fenced JSON body")
+	}
+	body = strings.TrimSpace(body)
+	end := strings.LastIndex(body, "```")
+	if end < 0 || strings.TrimSpace(body[end+3:]) != "" {
+		return nil, errors.New("unterminated fenced JSON body")
+	}
+	return []byte(strings.TrimSpace(body[:end])), nil
 }
 func Validate(e Explanation, ev analysis.Evidence) error {
 	if strings.TrimSpace(e.Summary) == "" || len(e.Summary) > 4000 || len(e.Changes) > 20 || len(e.Impacts) > 20 || len(e.Relationships) > 20 || len(e.Uncertainties) > 20 {

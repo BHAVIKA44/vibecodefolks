@@ -57,6 +57,27 @@ func TestProviderSuccessAndValidation(t *testing.T) {
 		t.Fatalf("provider error: %v", err)
 	}
 }
+
+func TestProviderAcceptsFencedJSONAndIgnoresProviderMetadata(t *testing.T) {
+	content := strings.TrimSuffix(answer("main.go"), "}") + `,"provider_trace":"ignored"}`
+	s := providerServer(t, 200, "```json\n"+content+"\n```")
+	defer s.Close()
+	cfg, _ := NewConfig(s.URL, "test", "")
+	got, err := NewProvider(cfg).Explain(context.Background(), fixture())
+	if err != nil || got.Summary != "A change" || len(got.Changes) != 1 {
+		t.Fatalf("fenced response: %+v %v", got, err)
+	}
+	for _, reserved := range []string{"scope", "limitations"} {
+		content := strings.TrimSuffix(answer("main.go"), "}") + fmt.Sprintf(`,%q:"unexpected"}`, reserved)
+		s2 := providerServer(t, 200, content)
+		cfg, _ = NewConfig(s2.URL, "test", "")
+		_, err = NewProvider(cfg).Explain(context.Background(), fixture())
+		s2.Close()
+		if err == nil {
+			t.Fatalf("accepted reserved field %q", reserved)
+		}
+	}
+}
 func TestConfig(t *testing.T) {
 	for _, v := range []struct{ url, model, key string }{{"", "m", ""}, {"http://example.com", "m", "key"}, {"https://example.com", "m", ""}, {"https://u:p@example.com", "m", "key"}, {"https://example.com?q=secret", "m", "key"}} {
 		if _, err := NewConfig(v.url, v.model, v.key); err == nil {
