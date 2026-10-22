@@ -57,6 +57,7 @@ func TestProviderSuccessAndValidation(t *testing.T) {
 		t.Fatalf("provider error: %v", err)
 	}
 	for code, want := range map[int]string{
+		http.StatusBadRequest:         "Check the endpoint, model name",
 		http.StatusServiceUnavailable: "temporarily unavailable",
 		http.StatusTooManyRequests:    "rate limit reached",
 	} {

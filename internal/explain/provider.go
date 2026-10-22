@@ -140,6 +140,9 @@ func (p *ChatProvider) Explain(ctx context.Context, ev analysis.Evidence) (Expla
 	}
 	defer res.Body.Close()
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		if res.StatusCode == http.StatusBadRequest {
+			return Explanation{}, errors.New("AI provider rejected the request (HTTP 400). Check the endpoint, model name, and that the API key can access that model")
+		}
 		if res.StatusCode == http.StatusServiceUnavailable {
 			return Explanation{}, errors.New("AI provider is temporarily unavailable (HTTP 503). No explanation was generated; wait briefly, then try again")
 		}
