@@ -91,6 +91,27 @@ func TestProviderAcceptsFencedJSONAndIgnoresProviderMetadata(t *testing.T) {
 		}
 	}
 }
+func TestResponsesEndpoint(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]any
+		if r.URL.Path != "/v1/responses" || json.NewDecoder(r.Body).Decode(&payload) != nil {
+			t.Fatal("invalid responses request")
+		}
+		if _, ok := payload["messages"]; ok {
+			t.Fatal("sent chat payload to responses endpoint")
+		}
+		if payload["store"] != false {
+			t.Fatal("responses must not store evidence")
+		}
+		json.NewEncoder(w).Encode(map[string]any{"output": []any{map[string]any{"content": []any{map[string]string{"type": "output_text", "text": answer("main.go")}}}}})
+	}))
+	defer s.Close()
+	cfg, _ := NewConfig(s.URL+"/v1/responses", "test", "")
+	got, err := NewProvider(cfg).Explain(context.Background(), fixture())
+	if err != nil || got.Summary != "A change" {
+		t.Fatalf("responses result: %+v %v", got, err)
+	}
+}
 func TestConfig(t *testing.T) {
 	for _, v := range []struct{ url, model, key string }{{"", "m", ""}, {"http://example.com", "m", "key"}, {"https://example.com", "m", ""}, {"https://u:p@example.com", "m", "key"}, {"https://example.com?q=secret", "m", "key"}} {
 		if _, err := NewConfig(v.url, v.model, v.key); err == nil {

@@ -115,7 +115,11 @@ func (p *ChatProvider) Explain(ctx context.Context, ev analysis.Evidence) (Expla
 	if len(data) > 512*1024 {
 		return Explanation{}, errors.New("Evidence exceeds provider input limit")
 	}
+	responses := strings.HasSuffix(strings.TrimRight(strings.ToLower(p.Config.Endpoint), "/"), "/responses")
 	payload := map[string]any{"model": p.Config.Model, "messages": []map[string]string{{"role": "system", "content": instruction}, {"role": "user", "content": string(data)}}, "response_format": map[string]string{"type": "json_object"}, "temperature": 0}
+	if responses {
+		payload = map[string]any{"model": p.Config.Model, "input": []map[string]string{{"role": "system", "content": instruction}, {"role": "user", "content": string(data)}}, "text": map[string]any{"format": map[string]string{"type": "json_object"}}, "store": false}
+	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return Explanation{}, err
@@ -161,12 +165,34 @@ func (p *ChatProvider) Explain(ctx context.Context, ev analysis.Evidence) (Expla
 				Content string `json:"content"`
 			} `json:"message"`
 		} `json:"choices"`
+		Output []struct {
+			Content []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"output"`
 	}
-	if json.Unmarshal(raw, &envelope) != nil || len(envelope.Choices) == 0 {
+	if json.Unmarshal(raw, &envelope) != nil {
+		return Explanation{}, errors.New("AI provider returned an invalid response")
+	}
+	contentText := ""
+	if len(envelope.Choices) > 0 {
+		contentText = envelope.Choices[0].Message.Content
+	}
+	if contentText == "" && responses {
+		for _, item := range envelope.Output {
+			for _, part := range item.Content {
+				if part.Type == "output_text" {
+					contentText += part.Text
+				}
+			}
+		}
+	}
+	if contentText == "" {
 		return Explanation{}, errors.New("AI provider returned an invalid response")
 	}
 	var result Explanation
-	content, err := structuredJSONObject(envelope.Choices[0].Message.Content)
+	content, err := structuredJSONObject(contentText)
 	if err != nil {
 		return Explanation{}, errors.New("AI returned malformed structured JSON")
 	}
