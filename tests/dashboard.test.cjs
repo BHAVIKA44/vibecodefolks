@@ -157,3 +157,28 @@ test('a clean repository has no changes to explain', async () => {
   assert.equal(elements.get('explain').disabled,true);
   assert.match(elements.get('message').textContent,/No changes to display/);
 });
+
+test('citations open the referenced diff and highlight the exact added line', async () => {
+  const {elements,context,load}=environment(() => Promise.resolve(jsonResponse(changes)));
+  load('graph.js'); load('quiz.js'); load('app.js');
+  await new Promise(resolve=>setImmediate(resolve));
+  context.fixtureEvidence={files:[{path:'src/App.js',type:'modified',excerpt:'@@ -1,2 +1,3 @@\n function App() {\n+  return fetch("/api/items");\n }\n'}]};
+  vm.runInContext("snapshotEvidence=fixtureEvidence; showCode('src/App.js',{path:'src/App.js',side:'new',start:2,end:2})",context);
+  assert.equal(elements.get('panel-code').hidden,false);
+  const diff=elements.get('code-view').children.find(e=>e.className==='diff-lines');
+  const highlighted=diff.children.find(e=>e.className.includes('highlighted'));
+  assert.match(allText(highlighted), /fetch\("\/api\/items"\)/);
+  assert.equal(diff.children.filter(e=>e.className.includes('highlighted')).length,1);
+});
+
+test('unavailable graph is explicit and does not render generic file cards', () => {
+  const {elements,context,load}=environment(()=>{});
+  vm.runInContext(`const element=id=>document.getElementById(id); const text=(tag,value,className)=>{const n=document.createElement(tag); n.textContent=value; if(className)n.className=className; return n}`,context);
+  load('graph.js');
+  context.graph={source:'unavailable',diagnostic:'invalid',notice:'No verified change flow available.',nodes:[],edges:[]};
+  context.evidence={files:[],skipped:[]};
+  vm.runInContext('renderGraph(graph,evidence)',context);
+  assert.match(elements.get('graph-notice').textContent,/No verified change flow/);
+  assert.match(allText(elements.get('graph-detail')),/No verified change flow/);
+  assert.equal(elements.get('change-graph').children.length,0);
+});

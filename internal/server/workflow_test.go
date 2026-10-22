@@ -30,6 +30,7 @@ func TestRealWorldWorkflows(t *testing.T) {
 		{"Python API", []workflowFile{{"api.py", "def health(): return 200\n", "def health(): return {'status': 'ok'}\n", false}}},
 		{"Java business logic", []workflowFile{{"src/Price.java", "class Price { int total() { return 0; } }\n", "class Price { int total() { return 42; } }\n", false}}},
 		{"Go function", []workflowFile{{"math.go", "package math\n", "package math\nfunc Add(a, b int) int { return a + b }\n", false}}},
+		{"Docker and Nginx", []workflowFile{{"backend/Dockerfile", "FROM python:3.12\n", "FROM python:3.12\nWORKDIR /app\n", false}, {"frontend/nginx.conf", "server {\n  listen 80;\n}\n", "server {\n  listen 80;\n  location /api/ { proxy_pass http://backend:8000; }\n}\n", false}, {"frontend/index.html", "<main></main>\n", "<main id=app></main>\n", false}, {"frontend/src/App.js", "export default function App() {}\n", "export default function App() { return fetch('/api/items'); }\n", false}, {"frontend/src/index.css", "body { color: black; }\n", "body { color: white; }\n", false}, {"infra/docker-compose.yml", "services: {}\n", "services:\n  backend:\n    build: ../backend\n", false}}},
 		{"Mixed authentication", []workflowFile{{"web/login.tsx", "// login\n", "// login\nfetch('/api/login', {method:'POST'});\n", false}, {"api/login.py", "# login\n", "# login\n@app.post('/api/login')\ndef login(): return 'ok'\n", false}, {"old.txt", "obsolete\n", "", true}, {"notes.txt", "old note\n", "unrelated note\n", false}}},
 	}
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
@@ -161,7 +162,7 @@ func TestRealWorldWorkflows(t *testing.T) {
 			if err := json.Unmarshal(result.Body.Bytes(), &output); err != nil {
 				t.Fatal(err)
 			}
-			if output.Explanation.Graph.Source != "ai" || len(output.Explanation.Graph.Edges) != 0 || len(output.Explanation.Quiz.Questions) != 1 || output.Snapshot != prepared.Snapshot || calls.Load() != 1 {
+			if output.Explanation.Graph.Source != "unavailable" || len(output.Explanation.Graph.Edges) != 0 || len(output.Explanation.Quiz.Questions) != 1 || output.Snapshot != prepared.Snapshot || calls.Load() != 1 {
 				t.Fatalf("bad result: %+v calls=%d", output, calls.Load())
 			}
 			fresh := request("POST", "/api/quiz/fresh", fmt.Sprintf(`{"snapshot":%q}`, output.Snapshot))

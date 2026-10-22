@@ -32,7 +32,7 @@ func TestGraphValidation(t *testing.T) {
 			}
 			raw, _ := json.Marshal(g)
 			fallback := graphOrFallback(raw, ev)
-			if fallback.Source != "files" || len(fallback.Edges) != 0 || len(fallback.Nodes) != 3 {
+			if fallback.Source != "unavailable" || fallback.Diagnostic != "invalid" || len(fallback.Edges) != 0 || len(fallback.Nodes) != 0 {
 				t.Fatalf("fallback: %+v", fallback)
 			}
 		})
@@ -45,17 +45,15 @@ func TestGraphSingleNodeAndMissingGraph(t *testing.T) {
 	g.Edges = nil
 	raw, _ := json.Marshal(g)
 	got := graphOrFallback(raw, ev)
-	if got.Source != "ai" || len(got.Nodes) != 1 || len(got.Edges) != 0 {
+	if got.Source != "unavailable" || got.Diagnostic != "unsupported" || len(got.Nodes) != 0 {
 		t.Fatalf("single node: %+v", got)
 	}
 	for _, raw := range []json.RawMessage{nil, []byte("null"), []byte(`{"nodes":"bad"}`)} {
 		got = graphOrFallback(raw, ev)
-		if got.Source != "files" || len(got.Edges) != 0 {
+		if got.Source != "unavailable" || len(got.Edges) != 0 {
 			t.Fatalf("fallback: %+v", got)
 		}
-		if got.Nodes[2].Status != "removed" || got.Nodes[2].References[0].Side != "old" {
-			t.Fatalf("deleted fallback: %+v", got.Nodes[2])
-		}
+
 	}
 }
 func TestGraphEscapedContent(t *testing.T) {
@@ -78,8 +76,37 @@ func TestGraphOmittedAndInvalidPreserveText(t *testing.T) {
 		cfg, _ := NewConfig(s.URL, "test", "")
 		got, err := NewProvider(cfg).Explain(context.Background(), fixture())
 		s.Close()
-		if err != nil || got.Summary != "A change" || got.Graph == nil || got.Graph.Source != "files" {
+		if err != nil || got.Summary != "A change" || got.Graph == nil || got.Graph.Source != "unavailable" {
 			t.Fatalf("response: %+v %v", got, err)
+		}
+	}
+}
+
+func TestGraphSemanticAddedInModifiedFile(t *testing.T) {
+	ev := graphFixture()
+	ev.Files[0].Excerpt = "@@ -1,2 +1,3 @@\n existing\n+login()\n existing\n"
+	ev.Files[0].Lines[0].Number = 2
+	g := validGraph()
+	g.Nodes[0].Status = "added"
+	g.Nodes[0].References[0].Start = 2
+	g.Nodes[0].References[0].End = 2
+	g.Edges[0].References[0] = g.Nodes[0].References[0]
+	if err := validateGraph(g, ev); err != nil {
+		t.Fatalf("added function in modified file: %v", err)
+	}
+	g.Nodes[0].References[0].Start = 1
+	g.Nodes[0].References[0].End = 1
+	if err := validateGraph(g, ev); err == nil {
+		t.Fatal("unsupported reference accepted")
+	}
+}
+func TestGraphDiagnostics(t *testing.T) {
+	ev := graphFixture()
+	cases := []struct{ raw, want string }{{"", "missing"}, {"null", "missing"}, {`{"nodes":"bad"}`, "malformed"}, {`{"nodes":[],"edges":[]}`, "invalid"}}
+	for _, tc := range cases {
+		got := graphOrFallback([]byte(tc.raw), ev)
+		if got.Diagnostic != tc.want {
+			t.Errorf("%s: got %s", tc.raw, got.Diagnostic)
 		}
 	}
 }

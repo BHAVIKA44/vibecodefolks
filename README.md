@@ -8,9 +8,9 @@ One Go executable. A local browser dashboard. No database, frontend runtime, or 
 
 > **Early beta:** AI explanations, connections, and quiz answers can be wrong. Review the cited code and run your own tests. Start with repositories that contain no sensitive information.
 
-![Local Git dashboard](docs/dashboard.png)
+![VibeCodeFolks workspace review](docs/workspace-overview-1440.png)
 
-The dashboard screenshot shows a fictional sample repository; the graph and quiz screenshots below use a scripted mock provider.
+The screenshots use a fictional local repository and a scripted local provider; no private source or credentials were used.
 
 ## Install
 
@@ -67,7 +67,7 @@ The path can point anywhere inside a Git repository; omit it for the current dir
 
 - Inspect working-tree Git changes or, when clean, the last commit.
 - Review bounded code evidence before sending it to a configured provider.
-- Explore an optional AI-generated change map and understanding quiz with cited source excerpts.
+- Work through an overview, cited code changes, an optional inferred flow, and an understanding quiz.
 - Run locally without a database, cloud service, or frontend runtime dependency.
 
 ## Git changes
@@ -95,9 +95,9 @@ Git filter and filesystem monitor commands are disabled during analysis. The ser
 
 After the explanation is ready, the change map uses the same evidence snapshot to show suggested components and connections. Select a card or arrow with the mouse or keyboard to see its description, uncertainty, and supporting diff excerpts. For example, a change to `web/login.js` and `api/auth.py` might show **Login form → Authentication API** when both files contain relevant evidence. The arrow is an AI inference; matching paths do not prove the request works at runtime. The screenshot below uses a scripted mock provider and a sample repository.
 
-![Sample change flow using a mock provider](docs/change-flow.png)
+![Sample change flow using a scripted local provider](docs/workspace-flow-1440.png)
 
-The snapshot timestamp and identifier describe the evidence sent to the provider. Refreshing Git changes clears the previous explanation and diagram; run **Explain Changes** again to analyze the new snapshot. If the provider omits a graph or returns an invalid one, the explanation remains available and the map shows disconnected file cards based on the collected evidence. It does not invent connections. Currently all displayed connections are AI inferences; no deterministic relationship extraction is performed. The map accepts at most 20 nodes and 30 edges, so larger changes may be summarized or fall back to file cards. Scroll the diagram horizontally for wide flows.
+The snapshot timestamp and identifier describe the evidence sent to the provider. Refreshing Git changes clears the previous explanation and diagram; run **Explain Changes** again to analyze the new snapshot. If a graph is omitted, unreadable, fails evidence checks, or has no supported connection, the explanation remains available and the flow says why it is unavailable. It never substitutes generic file cards or invents connections. Currently all displayed connections are AI inferences; no deterministic relationship extraction is performed. The map accepts at most 20 nodes and 30 edges, so larger changes may be summarized or have no supported flow. Use Fit and zoom controls and scroll the diagram for larger flows.
 
 ### Understanding quiz
 

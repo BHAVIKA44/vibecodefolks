@@ -9,11 +9,54 @@ const text = (tag, value, className) => {
 let pending = null;
 let requestController = null;
 let generation = 0;
+let snapshotEvidence = null;
+let changedFiles = [];
+let fileGroups = [];
+function selectTab(name) {
+  for (const tab of ['overview','code','flow','quiz']) {
+    element(`panel-${tab}`).hidden = tab !== name;
+    element(`tab-${tab}`).className = tab === name ? 'tab active' : 'tab';
+    element(`tab-${tab}`).setAttribute('aria-selected', String(tab === name));
+  }
+}
+for (const tab of ['overview','code','flow','quiz']) element(`tab-${tab}`).addEventListener('click', () => selectTab(tab));
+element('file-search').addEventListener('input', () => {
+  const query = element('file-search').value.toLowerCase();
+  for (const entry of changedFiles) entry.item.hidden = !entry.path.toLowerCase().includes(query);
+  for (const group of fileGroups) group.heading.hidden = !changedFiles.some(entry => entry.folder === group.folder && !entry.item.hidden);
+});
+function showCode(path, ref) {
+  selectTab('code');
+  for (const entry of changedFiles) entry.item.className = entry.path === path ? 'selected' : '';
+  const panel = element('code-view'); panel.replaceChildren();
+  const file = snapshotEvidence?.files.find((entry) => entry.path === path);
+  panel.append(text('div', path, 'code-path'));
+  if (!file) { panel.append(text('p', 'Diff evidence is not available for this file. It may be excluded by the evidence limits or privacy filters. Choose Explain changes to review available evidence.', 'muted')); return; }
+  panel.append(text('p', `${file.type} · captured diff evidence`, 'code-meta'));
+  const lines = document.createElement('div'); lines.className = 'diff-lines';
+  let oldLine = 0, newLine = 0, active = false, highlighted = null;
+  for (const line of file.excerpt.split('\n')) {
+    const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+    if (hunk) { oldLine = Number(hunk[1]); newLine = Number(hunk[2]); active = true; lines.append(text('div', line, 'diff-hunk')); continue; }
+    if (!active || !line || ![' ', '+', '-'].includes(line[0])) { if (line) lines.append(text('div', line, 'diff-hunk')); continue; }
+    const kind = line[0]; const oldNumber = kind === '+' ? null : oldLine++; const newNumber = kind === '-' ? null : newLine++;
+    const hit = ref && (ref.side === 'old' ? oldNumber : newNumber) >= ref.start && (ref.side === 'old' ? oldNumber : newNumber) <= ref.end && (ref.side === 'old' ? oldNumber : newNumber) !== null;
+    const row = document.createElement('div'); row.className = `diff-row ${kind === '+' ? 'addition' : kind === '-' ? 'deletion' : 'context'}${hit ? ' highlighted' : ''}`;
+    row.append(text('span', oldNumber ?? '', 'line-number'), text('span', newNumber ?? '', 'line-number'), text('code', line, 'line-code')); lines.append(row); if (hit && !highlighted) highlighted = row;
+  }
+  panel.append(lines); highlighted?.scrollIntoView?.({block:'center'});
+}
+function citationButton(ref) {
+  const button = text('button', `${ref.path} · ${ref.side} ${ref.start}–${ref.end}`, 'citation'); button.type = 'button';
+  button.addEventListener('click', () => showCode(ref.path, ref)); return button;
+}
 async function refresh() {
   generation += 1;
   clearQuiz();
   if (requestController) requestController.abort();
   pending = null;
+  snapshotEvidence = null; changedFiles = []; fileGroups = [];
+  selectTab('overview'); element('overview-empty').hidden = false; element('quiz-empty').hidden = false;
   element('consent-panel').hidden = true;
   element('explanation').hidden = true;
   element('cancel-request').hidden = true;
@@ -30,7 +73,7 @@ async function refresh() {
     const response = await fetch('/api/changes', { cache: 'no-store' });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'Analysis failed.');
-    element('repository').textContent = `${data.repository.root || data.repository.name} · ${data.repository.detached ? 'Detached HEAD ' : 'Branch '}${data.repository.branch}`;
+    element('repository').textContent = `${data.repository.name || "Repository"} · ${data.repository.detached ? 'Detached HEAD ' : 'Branch '}${data.repository.branch}`;
     element('scope').textContent = data.scope;
     element('scope').hidden = false;
     element('count').textContent = data.total_files;
@@ -40,6 +83,8 @@ async function refresh() {
     if (!data.total_files) messages.unshift('No changes to display.');
     element('message').textContent = messages.join(' ');
     for (const file of data.files) {
+      const folder = file.path.includes('/') ? file.path.slice(0, file.path.lastIndexOf('/')) : 'root';
+      if (!fileGroups.some(group => group.folder === folder)) { const heading = text('li', folder, 'folder-heading'); heading.setAttribute('aria-hidden', 'true'); element('files').append(heading); fileGroups.push({folder,heading}); }
       const item = document.createElement('li');
       const paths = document.createElement('div');
       paths.append(text('span', file.path, 'path'));
@@ -50,8 +95,10 @@ async function refresh() {
       const details = file.binary ? 'Binary' : file.lines_added === null || file.lines_deleted === null ? 'Stats unavailable' : `+${file.lines_added} / −${file.lines_deleted}`;
       meta.append(text('span', details, 'file-stats'));
       if (file.details) meta.append(text('span', file.details, 'file-stats'));
-      item.append(paths, meta);
-      element('files').append(item);
+      item.append(paths, meta); item.setAttribute('role', 'button'); item.setAttribute('tabindex', '0');
+      item.addEventListener('click', () => showCode(file.path));
+      item.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); showCode(file.path); } });
+      changedFiles.push({path:file.path,folder,item}); element('files').append(item);
     }
     loaded = data.total_files > 0;
   } catch (error) {
@@ -80,31 +127,24 @@ function showExplanation(result) {
   const container = element('explanation-content');
   container.replaceChildren();
   const e = result.explanation;
-  prepareQuiz(result);
+  snapshotEvidence = result.evidence; prepareQuiz(result); element('quiz-empty').hidden = true; element('overview-empty').hidden = true; selectTab('overview');
   element('snapshot').textContent = `${e.scope} · captured ${new Date(result.captured_at).toLocaleString()} · ${result.snapshot.slice(0, 12)}`;
   renderGraph(e.graph, result.evidence);
-  container.append(text('h3', 'Summary'), text('p', e.summary, 'muted'));
+  container.append(text('p', e.summary, 'summary-text'));
   function group(title, findings) {
     container.append(text('h3', title));
     if (!findings.length) { container.append(text('p', 'No supported findings provided.', 'muted')); return; }
     for (const finding of findings) {
       const block = document.createElement('article');
       block.append(text('h4', finding.title), text('p', finding.explanation, 'muted'));
-      for (const ref of finding.references) {
-        const detail = document.createElement('details');
-        detail.className = 'reference';
-        detail.append(text('summary', `${ref.path} · ${ref.side} lines ${ref.start}–${ref.end}`));
-        const file = result.evidence.files.find((f) => f.path === ref.path);
-        if (file) detail.append(text('pre', file.excerpt, 'excerpt'));
-        block.append(detail);
-      }
+      for (const ref of finding.references) block.append(citationButton(ref));
       container.append(block);
     }
   }
-  group('What AI changed · observed in code', e.changes);
-  group('Why it matters · likely impact', e.impacts);
-  group('How the changed pieces connect', e.relationships);
-  container.append(text('h3', 'What we couldn’t verify'));
+  group('Key changes', e.changes);
+  group('What this may affect', e.impacts);
+  group('How it works · inferred connections', e.relationships);
+  container.append(text('h3', 'Things to verify'));
   const list = document.createElement('ul');
   for (const item of [...e.uncertainties, ...e.limitations]) list.append(text('li', item));
   container.append(list);
@@ -137,7 +177,7 @@ element('explain').addEventListener('click', async () => {
   try {
     const prepared = await post('/api/explain/prepare', {});
     if (currentGeneration !== generation) return;
-    pending = prepared;
+    pending = prepared; snapshotEvidence = prepared.evidence;
     element('consent-title').textContent = pending.local ? 'Review evidence for your local provider' : 'Review before sending';
     element('consent-label').hidden = pending.local;
     element('send-evidence').textContent = pending.local ? 'Explain locally' : 'Send and explain';
@@ -154,6 +194,10 @@ element('send-evidence').addEventListener('click', () => {
 });
 element('cancel-consent').addEventListener('click', () => { pending = null; element('consent-panel').hidden = true; element('explain-status').textContent = 'Canceled; no evidence was sent.'; element('explain').disabled = false; });
 element('cancel-request').addEventListener('click', () => requestController?.abort());
+
+element('graph-fit').addEventListener('click', () => graphZoom(0));
+element('graph-minus').addEventListener('click', () => graphZoom(-0.2));
+element('graph-plus').addEventListener('click', () => graphZoom(0.2));
 
 element('quiz-start').addEventListener('click', startQuiz);
 refresh();

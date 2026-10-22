@@ -16,10 +16,11 @@ const MaxGraphNodes = 20
 const MaxGraphEdges = 30
 
 type Graph struct {
-	Source string      `json:"source"`
-	Notice string      `json:"notice"`
-	Nodes  []GraphNode `json:"nodes"`
-	Edges  []GraphEdge `json:"edges"`
+	Source     string      `json:"source"`
+	Diagnostic string      `json:"diagnostic,omitempty"`
+	Notice     string      `json:"notice"`
+	Nodes      []GraphNode `json:"nodes"`
+	Edges      []GraphEdge `json:"edges"`
 }
 type GraphNode struct {
 	ID          string      `json:"id"`
@@ -44,27 +45,33 @@ var validID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
 // Graphs are optional: malformed or unsupported graph data never discards valid text.
 func graphOrFallback(raw json.RawMessage, ev analysis.Evidence) Graph {
+	category := "missing"
 	if len(raw) > 0 && string(raw) != "null" {
+		category = "malformed"
 		var graph Graph
 		dec := json.NewDecoder(bytes.NewReader(raw))
 		dec.DisallowUnknownFields()
-		if dec.Decode(&graph) == nil {
+		if err := dec.Decode(&graph); err == nil {
 			var extra any
-			if dec.Decode(&extra) == io.EOF && validateGraph(graph, ev) == nil {
-				graph.Source = "ai"
-				if graph.Edges == nil {
-					graph.Edges = []GraphEdge{}
+			if dec.Decode(&extra) == io.EOF {
+				category = "invalid"
+				if validateGraph(graph, ev) == nil {
+					if len(graph.Edges) == 0 {
+						category = "unsupported"
+					} else {
+						graph.Source = "ai"
+						graph.Notice = "Connections are AI inferences, not verified runtime behavior."
+						return graph
+					}
 				}
-				graph.Notice = "Connections are AI inferences, not verified runtime behavior."
-				return graph
 			}
 		}
 	}
-	return fileGraph(ev)
+	return Graph{Source: "unavailable", Diagnostic: category, Notice: "No verified change flow available. Review the explanation and changed files; no runtime relationships have been established.", Nodes: []GraphNode{}, Edges: []GraphEdge{}}
 }
 func bounded(s string, limit int) bool { return strings.TrimSpace(s) != "" && len(s) <= limit }
 func validateGraph(g Graph, ev analysis.Evidence) error {
-	if g.Source != "" || g.Notice != "" || len(g.Nodes) == 0 || len(g.Nodes) > MaxGraphNodes || len(g.Edges) > MaxGraphEdges {
+	if g.Source != "" || g.Notice != "" || g.Diagnostic != "" || len(g.Nodes) == 0 || len(g.Nodes) > MaxGraphNodes || len(g.Edges) > MaxGraphEdges {
 		return errors.New("invalid graph size or reserved fields")
 	}
 	nodes := map[string]GraphNode{}
@@ -90,7 +97,7 @@ func validateGraph(g Graph, ev analysis.Evidence) error {
 			matches := false
 			for _, ref := range n.References {
 				for _, f := range ev.Files {
-					if f.Path == ref.Path && (f.Type == n.Status || f.Type == "deleted" && n.Status == "removed" || f.Type == "renamed" && n.Status == "modified") && (n.Status != "added" || ref.Side == "new") && (n.Status != "removed" || ref.Side == "old") {
+					if f.Path == ref.Path && ((n.Status == "modified" && (f.Type == "modified" || f.Type == "renamed")) || (n.Status == "added" && ref.Side == "new" && (f.Type == "added" || changedReference(f, ref, '+'))) || (n.Status == "removed" && ref.Side == "old" && (f.Type == "deleted" || changedReference(f, ref, '-')))) {
 						matches = true
 					}
 				}
@@ -134,35 +141,51 @@ func validateGraph(g Graph, ev analysis.Evidence) error {
 func overlaps(a, b Reference) bool {
 	return a.Path == b.Path && a.Side == b.Side && a.Start <= b.End && b.Start <= a.End
 }
-func fileGraph(ev analysis.Evidence) Graph {
-	g := Graph{Source: "files", Notice: "File-only view: no supported connections are available. The layout does not imply a flow.", Nodes: []GraphNode{}, Edges: []GraphEdge{}}
-	for i, f := range ev.Files {
-		if i >= MaxGraphNodes {
-			g.Notice += " Some files are omitted due to the graph limit."
-			break
-		}
-		if len(f.Lines) == 0 {
+
+// changedReference checks only actual hunk additions/removals, not imported context.
+func changedReference(f analysis.EvidenceFile, ref Reference, marker byte) bool {
+	old, current := 0, 0
+	active := false
+	for _, line := range strings.Split(f.Excerpt, "\n") {
+		if strings.HasPrefix(line, "@@ ") {
+			var oldCount, newCount int
+			if _, err := fmt.Sscanf(line, "@@ -%d,%d +%d,%d", &old, &oldCount, &current, &newCount); err != nil {
+				// Git can omit the count for one-line hunks.
+				parts := strings.Fields(line)
+				if len(parts) < 3 {
+					active = false
+					continue
+				}
+				fmt.Sscanf(strings.Split(strings.TrimPrefix(parts[1], "-"), ",")[0], "%d", &old)
+				fmt.Sscanf(strings.Split(strings.TrimPrefix(parts[2], "+"), ",")[0], "%d", &current)
+			}
+			active = true
 			continue
 		}
-		line := f.Lines[0]
-		for _, l := range f.Lines {
-			if f.Type != "deleted" && l.Side == "new" {
-				line = l
-				break
+		if !active || len(line) == 0 {
+			continue
+		}
+		switch line[0] {
+		case ' ':
+			old++
+			current++
+		case '-':
+			if marker == '-' && old >= ref.Start && old <= ref.End {
+				return true
 			}
+			old++
+		case '+':
+			if marker == '+' && current >= ref.Start && current <= ref.End {
+				return true
+			}
+			current++
+		case '\\':
+		default:
+			active = false
 		}
-		status := f.Type
-		if status == "deleted" {
-			status = "removed"
-		}
-		if status != "added" && status != "modified" && status != "removed" {
-			status = "unknown"
-		}
-		g.Nodes = append(g.Nodes, GraphNode{ID: fmt.Sprintf("file-%d", i), Label: f.Path, Description: "Changed file from Git evidence.", Change: "Git reports this file as " + f.Type + ".", Impact: "The effect on behavior has not been established.", Uncertainty: "Relationships and runtime behavior are not verified.", Status: status, References: []Reference{{Path: f.Path, Side: line.Side, Start: line.Number, End: line.Number}}})
 	}
-	return g
+	return false
 }
-
 func hasUnchangedContext(refs []Reference, ev analysis.Evidence) bool {
 	for _, ref := range refs {
 		for _, f := range ev.Files {
