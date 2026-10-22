@@ -140,6 +140,12 @@ func (p *ChatProvider) Explain(ctx context.Context, ev analysis.Evidence) (Expla
 	}
 	defer res.Body.Close()
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		if res.StatusCode == http.StatusServiceUnavailable {
+			return Explanation{}, errors.New("AI provider is temporarily unavailable (HTTP 503). No explanation was generated; wait briefly, then try again")
+		}
+		if res.StatusCode == http.StatusTooManyRequests {
+			return Explanation{}, errors.New("AI provider rate limit reached (HTTP 429). Wait before trying again")
+		}
 		return Explanation{}, fmt.Errorf("AI provider returned HTTP %d", res.StatusCode)
 	}
 	raw, err := io.ReadAll(io.LimitReader(res.Body, 1024*1024+1))

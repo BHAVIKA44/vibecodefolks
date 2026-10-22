@@ -56,6 +56,18 @@ func TestProviderSuccessAndValidation(t *testing.T) {
 	if err == nil || strings.Contains(err.Error(), "secret") {
 		t.Fatalf("provider error: %v", err)
 	}
+	for code, want := range map[int]string{
+		http.StatusServiceUnavailable: "temporarily unavailable",
+		http.StatusTooManyRequests:    "rate limit reached",
+	} {
+		s4 := providerServer(t, code, "provider details must not be exposed")
+		cfg, _ = NewConfig(s4.URL, "test", "")
+		_, err = NewProvider(cfg).Explain(context.Background(), fixture())
+		s4.Close()
+		if err == nil || !strings.Contains(err.Error(), want) || strings.Contains(err.Error(), "provider details") {
+			t.Fatalf("status %d: %v", code, err)
+		}
+	}
 }
 
 func TestProviderAcceptsFencedJSONAndIgnoresProviderMetadata(t *testing.T) {
