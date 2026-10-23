@@ -2,9 +2,11 @@
 
 **AI wrote it. Do you understand it?**
 
-VibeCodeFolks is a local tool for understanding code changes made by AI coding agents. Point it at a Git repository, review the changes, and ask an AI provider to explain the evidence. Explore a change map and check your understanding with a short quiz.
+VibeCodeFolks is a local review tool for understanding code changes made by AI coding agents. Point it at a Git repository, review the changed evidence, then ask a local coding harness or an optional AI provider to explain it. Explore a cited change map and check your understanding with a short quiz.
 
-One Go executable. A local browser dashboard. No database, frontend runtime, or account required.
+One Go executable. A local browser dashboard. No database, frontend runtime, or VibeCodeFolks account required.
+
+Its local-first architecture is inspired by [px0](https://github.com/px0-ai/px0): a small Go process serves a browser workbench and can hand work to tooling already installed on the developer's machine. VibeCodeFolks is original software with a narrower goal: explaining and checking understanding of AI-authored Git changes.
 
 > **Early beta:** AI explanations, connections, and quiz answers can be wrong. Review the cited code and run your own tests. Start with repositories that contain no sensitive information.
 
@@ -66,7 +68,7 @@ The path can point anywhere inside a Git repository; omit it for the current dir
 ## Features
 
 - Inspect working-tree Git changes or, when clean, the last commit.
-- Review bounded code evidence before sending it to a configured provider.
+- Review bounded code evidence before sending it to a local harness or configured provider.
 - Work through an overview, cited code changes, an optional inferred flow, and an understanding quiz.
 - Run locally without a database, cloud service, or frontend runtime dependency.
 
@@ -76,11 +78,9 @@ The dashboard shows the combined working-tree diff from `HEAD`, plus untracked n
 
 ## Optional AI explanation
 
-The dashboard's **Codex (local)** option follows the local-harness model: it uses an already installed and authenticated Codex CLI, so VibeCodeFolks does not receive or save an API key. It sends only the evidence shown in the preview and starts Codex in a temporary, read-only directory. The local CLI remains responsible for its account, selected model, and provider access.
+The dashboard's **Codex (local)** option follows the local-harness model: it uses an already installed and authenticated Codex CLI, so VibeCodeFolks does not receive or save an API key. It sends only the reviewed evidence and starts Codex in a temporary, read-only directory. The Codex CLI remains responsible for its account, selected model, and provider access. If the CLI is unavailable or cannot run noninteractively, VibeCodeFolks reports that failure and does not display an explanation.
 
 Direct HTTP providers remain available when you prefer them. Configure them in the dashboard for the current session, or set these environment variables before starting the CLI:
-
-Set these environment variables before starting the CLI:
 
 ```sh
 export VIBECODEFOLKS_AI_ENDPOINT="https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
@@ -89,7 +89,7 @@ export VIBECODEFOLKS_AI_MODEL="your-available-gemini-model"
 vibecodefolks /path/to/project
 ```
 
-Use the provider's full chat-completions URL. Remote endpoints require HTTPS and an API key; loopback endpoints can use HTTP and do not require a key. Providers must support OpenAI-compatible chat completions and structured JSON responses. Groq uses its strict JSON Schema mode. No AI request is made when the dashboard opens. Click **Explain Changes**, review the evidence and provider details, then explicitly send it. Remote providers require the consent checkbox. Canceling a provider request cancels the HTTP call where possible.
+Use the provider's full chat-completions URL. Remote endpoints require HTTPS and an API key; loopback endpoints can use HTTP and do not require a key. Providers must support OpenAI-compatible chat completions and structured JSON responses. Groq uses its strict JSON Schema mode; other compatible providers use JSON-object mode. No AI request is made when the dashboard opens. Click **Explain Changes**, review the evidence and provider details, then explicitly send it. Remote providers require the consent checkbox. Canceling a provider request cancels the HTTP call where possible.
 
 The server collects unified diff hunks with three lines of surrounding context, including untracked additions, and up to eight straightforward single-line import statements from each current file. It sends the selected file paths, diff excerpts, line references, scope, and limitations to the provider. It excludes binary files, symlinks, common credential filenames, detected secret patterns, oversized files and diffs, and files beyond configured limits. At most 20 files, 32 KiB per file/diff, and 160 KiB total diff text are included. The serialized provider evidence is additionally capped at 512 KiB. Skipped files and reasons are displayed. Secret detection is **best effort** and cannot guarantee all sensitive information is removed: inspect the preview before sending. Your provider may retain submitted data. The local server does not log source snippets, prompts, or keys.
 
