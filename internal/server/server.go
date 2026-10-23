@@ -40,12 +40,16 @@ func Handler(dir string, assets fs.FS, host string) http.Handler {
 			Endpoint string `json:"endpoint"`
 			Model    string `json:"model"`
 			APIKey   string `json:"api_key"`
+			Harness  string `json:"harness"`
 		}
 		if json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&in) != nil {
 			writeError(w, http.StatusBadRequest, "Invalid provider setup")
 			return
 		}
 		cfg, err := explain.NewConfig(in.Endpoint, in.Model, in.APIKey)
+		if in.Harness != "" {
+			cfg, err = explain.NewHarnessConfig(in.Harness)
+		}
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
@@ -152,7 +156,7 @@ func Handler(dir string, assets fs.FS, host string) http.Handler {
 			writeError(w, http.StatusForbidden, "Explicit consent is required before sending evidence to a remote provider")
 			return
 		}
-		result, err := explain.NewProvider(p.config).Explain(r.Context(), p.evidence)
+		result, err := explain.ProviderFor(p.config).Explain(r.Context(), p.evidence)
 		if err != nil {
 			writeError(w, http.StatusBadGateway, err.Error())
 			return

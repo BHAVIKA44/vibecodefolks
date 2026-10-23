@@ -60,7 +60,7 @@ The path can point anywhere inside a Git repository; omit it for the current dir
 
 1. An AI coding agent changes your repository.
 2. Run VibeCodeFolks and inspect the Git changes in your browser.
-3. Configure an AI provider, review the evidence preview, and choose whether to send it.
+3. Select the locally installed Codex harness or configure an AI provider, review the evidence preview, and choose whether to send it.
 4. Explore the explanation and change map, then try the optional quiz.
 
 ## Features
@@ -76,6 +76,10 @@ The dashboard shows the combined working-tree diff from `HEAD`, plus untracked n
 
 ## Optional AI explanation
 
+The dashboard's **Codex (local)** option follows the local-harness model: it uses an already installed and authenticated Codex CLI, so VibeCodeFolks does not receive or save an API key. It sends only the evidence shown in the preview and starts Codex in a temporary, read-only directory. The local CLI remains responsible for its account, selected model, and provider access.
+
+Direct HTTP providers remain available when you prefer them. Configure them in the dashboard for the current session, or set these environment variables before starting the CLI:
+
 Set these environment variables before starting the CLI:
 
 ```sh
@@ -85,7 +89,7 @@ export VIBECODEFOLKS_AI_MODEL="your-available-gemini-model"
 vibecodefolks /path/to/project
 ```
 
-Use the provider's full chat-completions URL. Remote endpoints require HTTPS and an API key; loopback endpoints can use HTTP and do not require a key. Providers must support OpenAI-compatible chat completions and JSON object responses. No AI request is made when the dashboard opens. Click **Explain Changes**, review the evidence and provider details, then explicitly send it. Remote providers require the consent checkbox. Canceling a provider request cancels the HTTP call where possible.
+Use the provider's full chat-completions URL. Remote endpoints require HTTPS and an API key; loopback endpoints can use HTTP and do not require a key. Providers must support OpenAI-compatible chat completions and structured JSON responses. Groq uses its strict JSON Schema mode. No AI request is made when the dashboard opens. Click **Explain Changes**, review the evidence and provider details, then explicitly send it. Remote providers require the consent checkbox. Canceling a provider request cancels the HTTP call where possible.
 
 The server collects unified diff hunks with three lines of surrounding context, including untracked additions, and up to eight straightforward single-line import statements from each current file. It sends the selected file paths, diff excerpts, line references, scope, and limitations to the provider. It excludes binary files, symlinks, common credential filenames, detected secret patterns, oversized files and diffs, and files beyond configured limits. At most 20 files, 32 KiB per file/diff, and 160 KiB total diff text are included. The serialized provider evidence is additionally capped at 512 KiB. Skipped files and reasons are displayed. Secret detection is **best effort** and cannot guarantee all sensitive information is removed: inspect the preview before sending. Your provider may retain submitted data. The local server does not log source snippets, prompts, or keys.
 

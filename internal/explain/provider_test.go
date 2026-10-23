@@ -7,6 +7,7 @@ import (
 	"github.com/BHAVIKA44/vibecodefolks/internal/analysis"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -91,6 +92,34 @@ func TestProviderAcceptsFencedJSONAndIgnoresProviderMetadata(t *testing.T) {
 		}
 	}
 }
+
+func TestGroqUsesStrictStructuredOutput(t *testing.T) {
+	p := &ChatProvider{Config: Config{Endpoint: "https://api.groq.com/openai/v1/chat/completions"}}
+	format := p.responseFormat()
+	if format["type"] != "json_schema" {
+		t.Fatalf("Groq format = %#v", format)
+	}
+	schema, ok := format["json_schema"].(map[string]any)
+	if !ok || schema["strict"] != true || schema["name"] != "vibecodefolks_explanation" {
+		t.Fatalf("invalid Groq schema wrapper: %#v", format)
+	}
+	encoded, err := json.Marshal(format)
+	if err != nil || !json.Valid(encoded) || !strings.Contains(string(encoded), `"additionalProperties":false`) {
+		t.Fatalf("invalid Groq schema: %s %v", encoded, err)
+	}
+	plain := (&ChatProvider{Config: Config{Endpoint: "https://example.com/v1/chat/completions"}}).responseFormat()
+	if plain["type"] != "json_object" {
+		t.Fatalf("generic format = %#v", plain)
+	}
+}
+
+func TestStructuredJSONObjectExtractsWrappedObject(t *testing.T) {
+	wrapped := "Here is the result:\n" + answer("main.go") + "\nDone."
+	got, err := structuredJSONObject(wrapped)
+	if err != nil || !json.Valid(got) {
+		t.Fatalf("wrapped JSON: %q %v", got, err)
+	}
+}
 func TestResponsesEndpoint(t *testing.T) {
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var payload map[string]any
@@ -146,5 +175,26 @@ func TestRelationshipNeedsBothReferences(t *testing.T) {
 	e.Relationships = []Finding{{Title: "Connection", Explanation: "Related", References: []Reference{{Path: "main.go", Side: "new", Start: 2, End: 2}}}}
 	if err := Validate(e, fixture()); err == nil {
 		t.Fatal("accepted relationship with only one reference")
+	}
+}
+
+func TestCodexHarnessUsesLocalCLIAndValidatesResult(t *testing.T) {
+	dir := t.TempDir()
+	binary := dir + "/codex"
+	script := "#!/bin/sh\nout=''\nwhile [ $# -gt 0 ]; do\n  if [ \"$1\" = \"-o\" ]; then out=$2; shift 2; continue; fi\n  shift\ndone\ncat > \"$out\" <<'JSON'\n" + answer("main.go") + "\nJSON\n"
+	if err := os.WriteFile(binary, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+	cfg, err := NewHarnessConfig("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := ProviderFor(cfg).Explain(context.Background(), fixture())
+	if err != nil || got.Summary != "A change" || got.Graph == nil {
+		t.Fatalf("harness response: %+v %v", got, err)
+	}
+	if _, err := NewHarnessConfig("unknown"); err == nil {
+		t.Fatal("accepted unknown harness")
 	}
 }
