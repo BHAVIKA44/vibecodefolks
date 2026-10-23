@@ -6,7 +6,6 @@ VibeCodeFolks is a local review tool for understanding code changes made by AI c
 
 One Go executable. A local browser dashboard. No database, frontend runtime, or VibeCodeFolks account required.
 
-Its local-first architecture is inspired by [px0](https://github.com/px0-ai/px0): a small Go process serves a browser workbench and can hand work to tooling already installed on the developer's machine. VibeCodeFolks is original software with a narrower goal: explaining and checking understanding of AI-authored Git changes.
 
 > **Early beta:** AI explanations, connections, and quiz answers can be wrong. Review the cited code and run your own tests. Start with repositories that contain no sensitive information.
 
