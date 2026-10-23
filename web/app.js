@@ -114,6 +114,12 @@ async function refresh() {
   } finally { button.disabled = false; element('explain').disabled = !loaded; }
 }
 element('refresh').addEventListener('click', refresh);
+element('provider-connect').addEventListener('click', async () => {
+  const choice = element('provider-choice').value;
+  const providers = {groq:['https://api.groq.com/openai/v1/chat/completions','openai/gpt-oss-20b','Groq'],openai:['https://api.openai.com/v1/chat/completions','gpt-4.1-mini','OpenAI'],gemini:['https://generativelanguage.googleapis.com/v1beta/openai/chat/completions','gemini-3.8-flash','Gemini'],xai:['https://api.x.ai/v1/responses','grok-4.7','Grok'],ollama:['http://127.0.0.1:11434/v1/chat/completions','llama3.2','Ollama'],lmstudio:['http://127.0.0.1:1234/v1/chat/completions','local-model','LM Studio']};
+  const [endpoint, model, name] = providers[choice];
+  try { await post('/api/provider', {endpoint, model, api_key: element('provider-key').value}); element('provider-key').value = ''; element('explain-status').textContent = `${name} connected for this session.`; } catch (error) { element('explain-status').textContent = error.message; }
+});
 async function post(url, data, signal) {
   const response = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data), signal});
   const result = await response.json();

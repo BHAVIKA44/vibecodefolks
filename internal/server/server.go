@@ -26,11 +26,35 @@ type prepared struct {
 type state struct {
 	mu       sync.Mutex
 	requests map[string]prepared
+	config   *explain.Config
 }
 
 func Handler(dir string, assets fs.FS, host string) http.Handler {
 	s := &state{requests: map[string]prepared{}}
 	mux := http.NewServeMux()
+	mux.HandleFunc("/api/provider", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || !jsonRequest(w, r) {
+			return
+		}
+		var in struct {
+			Endpoint string `json:"endpoint"`
+			Model    string `json:"model"`
+			APIKey   string `json:"api_key"`
+		}
+		if json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&in) != nil {
+			writeError(w, http.StatusBadRequest, "Invalid provider setup")
+			return
+		}
+		cfg, err := explain.NewConfig(in.Endpoint, in.Model, in.APIKey)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		s.mu.Lock()
+		s.config = &cfg
+		s.mu.Unlock()
+		writeJSON(w, map[string]bool{"configured": true})
+	})
 	mux.HandleFunc("/api/changes", func(w http.ResponseWriter, r *http.Request) {
 		if !method(w, r, "GET") {
 			return
@@ -46,7 +70,13 @@ func Handler(dir string, assets fs.FS, host string) http.Handler {
 		if !method(w, r, "POST") || !jsonRequest(w, r) {
 			return
 		}
+		s.mu.Lock()
+		configured := s.config
+		s.mu.Unlock()
 		cfg, err := explain.ConfigFromEnv()
+		if configured != nil {
+			cfg, err = *configured, nil
+		}
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
