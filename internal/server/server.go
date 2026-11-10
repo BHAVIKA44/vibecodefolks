@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -30,6 +31,7 @@ type quizSession struct {
 	prepared prepared
 	expires  time.Time
 	busy     bool
+	busyCtx  context.Context
 	timer    *time.Timer
 }
 type state struct {
@@ -319,12 +321,24 @@ func Handler(dir string, assets fs.FS, host string) http.Handler {
 			writeError(w, http.StatusForbidden, "Explicit consent is required before sending evidence for quiz generation")
 			return
 		}
+		for wait := 0; session.busy && session.busyCtx != nil && session.busyCtx.Err() != nil && wait < 100; wait++ {
+			s.mu.Unlock()
+			time.Sleep(20 * time.Millisecond)
+			s.mu.Lock()
+			session, ok = s.quizzes[in.Session]
+			if !ok {
+				s.mu.Unlock()
+				writeError(w, http.StatusBadRequest, "Quiz session expired or does not match this snapshot. Explain the changes again")
+				return
+			}
+		}
 		if session.busy {
 			s.mu.Unlock()
 			writeError(w, http.StatusConflict, "Quiz generation is already running")
 			return
 		}
 		session.busy = true
+		session.busyCtx = r.Context()
 		s.quizzes[in.Session] = session
 		s.mu.Unlock()
 		defer func() {
@@ -332,6 +346,7 @@ func Handler(dir string, assets fs.FS, host string) http.Handler {
 			current, exists := s.quizzes[in.Session]
 			if exists {
 				current.busy = false
+				current.busyCtx = nil
 				s.quizzes[in.Session] = current
 			}
 			s.mu.Unlock()
@@ -385,6 +400,13 @@ func Handler(dir string, assets fs.FS, host string) http.Handler {
 			return
 		}
 		writeJSON(w, map[string]bool{"fresh": fresh})
+	})
+	mux.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.Handle("/", http.FileServer(http.FS(assets)))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

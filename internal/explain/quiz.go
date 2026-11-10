@@ -76,7 +76,7 @@ func validateQuiz(raw json.RawMessage, ev analysis.Evidence) (*Quiz, string) {
 		}
 		options := map[string]bool{}
 		for _, option := range item.Options {
-			normalized := strings.TrimSpace(option)
+			normalized := strings.Join(strings.Fields(option), " ")
 			if !bounded(option, 300) || options[normalized] {
 				return nil, "invalid_structure"
 			}
@@ -157,7 +157,7 @@ func decodeDedicatedQuiz(content string, used analysis.Evidence) (*Quiz, string,
 		}
 		seenFeedback := map[string]bool{}
 		for _, explanation := range q.OptionExplanations {
-			feedback := strings.TrimSpace(explanation)
+			feedback := strings.Join(strings.Fields(explanation), " ")
 			if !bounded(explanation, 1000) || seenFeedback[feedback] {
 				return nil, "invalid_structure", nil
 			}

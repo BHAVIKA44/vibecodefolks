@@ -320,3 +320,92 @@ test('send-evidence button when pending is null does not throw', async () => {
   });
   assert.match(elements.get('explain-status').textContent, /No prepared evidence/);
 });
+
+test('import context lines are rendered as numbered diff rows and highlighted when cited', async () => {
+  const {elements,context,load}=environment(() => Promise.resolve(jsonResponse(changes)));
+  load('graph.js'); load('quiz.js'); load('app.js');
+  await new Promise(resolve=>setImmediate(resolve));
+  const excerpt = '@@ -10,2 +10,2 @@\n-oldCall();\n+newCall();\n\n[Additional import context from the current file]\n1: import { useEffect } from "react";\n';
+  context.fixtureEvidence={files:[{path:'src/hook.ts',type:'modified',excerpt}]};
+  vm.runInContext("snapshotEvidence=fixtureEvidence; showCode('src/hook.ts',{path:'src/hook.ts',side:'new',start:1,end:1})",context);
+  const diff=elements.get('code-view').children.find(e=>e.className==='diff-lines');
+  const highlighted=diff.children.filter(e=>e.className.includes('highlighted'));
+  assert.equal(highlighted.length,1);
+  assert.match(allText(highlighted[0]), /import \{ useEffect \}/);
+});
+
+test('provider failure during sendExplanation preserves pending token and consent panel for immediate retry', async () => {
+  let explainCalls = 0;
+  const fetch = url => {
+    if (url === '/api/harnesses') return Promise.resolve(jsonResponse([]));
+    if (url === '/api/changes') return Promise.resolve(jsonResponse({...changes, total_files: 1}));
+    if (url === '/api/explain/prepare') return Promise.resolve(jsonResponse({token:'keep-me',local:true,endpoint:'Codex local harness',model:'',evidence:{files:[]},skipped:[]}));
+    if (url === '/api/explain') {
+      explainCalls++;
+      if (explainCalls === 1) return Promise.resolve({ok:false, json:async()=>({error:'Codex reported a usage or rate limit.'})});
+      return Promise.resolve(jsonResponse({snapshot:'a'.repeat(64),captured_at:new Date().toISOString(),explanation:{summary:'Done',scope:'Working Tree',changes:[],impacts:[],relationships:[],uncertainties:[],limitations:[]},evidence:{files:[],skipped:[]}}));
+    }
+    throw new Error(`unexpected ${url}`);
+  };
+  const {elements,load}=environment(fetch); load('graph.js'); load('quiz.js'); load('app.js');
+  await new Promise(resolve=>setImmediate(resolve));
+  await elements.get('explain').listeners.click();
+  await elements.get('send-evidence').listeners.click();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(elements.get('consent-panel').hidden, false);
+  assert.match(elements.get('explain-status').textContent, /usage or rate limit/);
+  await elements.get('send-evidence').listeners.click();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(explainCalls, 2);
+  assert.equal(elements.get('explanation').hidden, false);
+});
+
+test('clicking Code changes tab selects first file and supports prev/next navigation', async () => {
+  const multiChanges = {...changes, total_files: 2, files: [{path:'a.go',type:'modified',lines_added:1,lines_deleted:0},{path:'b.go',type:'modified',lines_added:2,lines_deleted:1}]};
+  const fetch = url => {
+    if (url === '/api/harnesses') return Promise.resolve(jsonResponse([]));
+    if (url === '/api/changes') return Promise.resolve(jsonResponse(multiChanges));
+    if (url === '/api/evidence') return Promise.resolve(jsonResponse({files:[{path:'a.go',type:'modified',excerpt:'@@ -1 +1 @@\n-a\n+a2'},{path:'b.go',type:'modified',excerpt:'@@ -1 +1 @@\n-b\n+b2'}],skipped:[]}));
+    throw new Error(`unexpected ${url}`);
+  };
+  const {elements,load}=environment(fetch); load('graph.js'); load('quiz.js'); load('app.js');
+  await new Promise(resolve=>setImmediate(resolve));
+  elements.get('tab-code').listeners.click();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.match(allText(elements.get('code-view')), /a\.go/);
+  assert.match(allText(elements.get('code-view')), /1 \/ 2/);
+  const header = elements.get('code-view').children.find(e=>e.className==='code-path');
+  const nav = header.children.find(e=>e.className==='code-nav');
+  const nextBtn = nav.children.find(e=>e.textContent.includes('Next'));
+  nextBtn.listeners.click();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.match(allText(elements.get('code-view')), /b\.go/);
+  assert.match(allText(elements.get('code-view')), /2 \/ 2/);
+});
+
+test('retry button click event does not pass DOM Event as fetch AbortSignal', async () => {
+  const signals = [];
+  const fetch = (url, options) => {
+    if (url === '/api/harnesses') return Promise.resolve(jsonResponse([]));
+    if (url === '/api/changes') return Promise.resolve(jsonResponse(changes));
+    if (url === '/api/quiz/fresh') {
+      signals.push(options?.signal);
+      if (options?.signal !== undefined && typeof options.signal.aborted !== 'boolean') {
+        return Promise.reject(new TypeError('Failed to convert value to AbortSignal'));
+      }
+      return Promise.resolve(jsonResponse({fresh:true}));
+    }
+    throw new Error(`unexpected ${url}`);
+  };
+  const {elements,context,load}=environment(fetch); load('graph.js'); load('quiz.js'); load('app.js');
+  await new Promise(resolve=>setImmediate(resolve));
+  context.result={snapshot:'a'.repeat(64),explanation:{quiz:sampleQuiz},evidence:{files:[]}};
+  vm.runInContext('prepareQuiz(result)',context);
+  await elements.get('quiz-start').listeners.click({type:'click'});
+  const panel=elements.get('quiz-content');
+  panel.children.find(e=>e.className==='quiz-options').children[1].listeners.click({type:'click'});
+  panel.children.find(e=>e.className==='quiz-feedback').children.find(e=>e.textContent==='See score').listeners.click({type:'click'});
+  await panel.children.find(e=>e.textContent==='Retry same questions').listeners.click({type:'click'});
+  assert.deepEqual(signals, [undefined, undefined]);
+  assert.ok(panel.children.some(e=>e.className==='quiz-options'));
+});

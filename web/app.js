@@ -28,19 +28,66 @@ function selectTab(name) {
     element(`tab-${tab}`).setAttribute('aria-selected', String(tab === name));
   }
 }
-for (const tab of ['overview','code','flow','quiz']) element(`tab-${tab}`).addEventListener('click', () => selectTab(tab));
+for (const tab of ['overview','code','flow','quiz']) {
+  element(`tab-${tab}`).addEventListener('click', () => {
+    selectTab(tab);
+    if (tab === 'code' && !codeSelection && changedFiles.length) showCode(changedFiles[0].path);
+  });
+}
 element('file-search').addEventListener('input', () => {
   const query = element('file-search').value.toLowerCase();
   for (const entry of changedFiles) entry.item.hidden = !entry.path.toLowerCase().includes(query);
   for (const group of fileGroups) group.heading.hidden = !changedFiles.some(entry => entry.folder === group.folder && !entry.item.hidden);
 });
+function renderDiffExcerpt(excerpt, ref) {
+  const lines = document.createElement('div'); lines.className = 'diff-lines';
+  let oldLine = 0, newLine = 0, active = false, importContext = false, highlighted = null;
+  for (const line of excerpt.split('\n')) {
+    const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+    if (hunk) { oldLine = Number(hunk[1]); newLine = Number(hunk[2]); active = true; importContext = false; lines.append(text('div', line, 'diff-hunk')); continue; }
+    if (line === '[Additional import context from the current file]') { importContext = true; lines.append(text('div', line, 'diff-hunk')); continue; }
+    if (importContext) {
+      const ctxMatch = /^(\d+): (.*)$/.exec(line);
+      if (ctxMatch) {
+        const newNumber = Number(ctxMatch[1]);
+        const hit = ref && ref.side === 'new' && newNumber >= ref.start && newNumber <= ref.end;
+        const row = document.createElement('div'); row.className = `diff-row context${hit ? ' highlighted' : ''}`;
+        row.append(text('span', '', 'line-number'), text('span', newNumber, 'line-number'), text('code', ` ${ctxMatch[2]}`, 'line-code'));
+        lines.append(row); if (hit && !highlighted) highlighted = row;
+        continue;
+      }
+    }
+    if (!active || !line || ![' ', '+', '-'].includes(line[0])) { if (line) lines.append(text('div', line, 'diff-hunk')); continue; }
+    const kind = line[0]; const oldNumber = kind === '+' ? null : oldLine++; const newNumber = kind === '-' ? null : newLine++;
+    const hit = ref && (ref.side === 'old' ? oldNumber : newNumber) >= ref.start && (ref.side === 'old' ? oldNumber : newNumber) <= ref.end && (ref.side === 'old' ? oldNumber : newNumber) !== null;
+    const row = document.createElement('div'); row.className = `diff-row ${kind === '+' ? 'addition' : kind === '-' ? 'deletion' : 'context'}${hit ? ' highlighted' : ''}`;
+    row.append(text('span', oldNumber ?? '', 'line-number'), text('span', newNumber ?? '', 'line-number'), text('code', line, 'line-code')); lines.append(row); if (hit && !highlighted) highlighted = row;
+  }
+  return {lines, highlighted};
+}
+function buildCodeHeader(path) {
+  const header = document.createElement('div'); header.className = 'code-path';
+  header.append(text('span', path));
+  const idx = changedFiles.findIndex(entry => entry.path === path);
+  if (idx >= 0 && changedFiles.length > 1) {
+    const nav = document.createElement('div'); nav.className = 'code-nav';
+    nav.append(text('span', `${idx + 1} / ${changedFiles.length}`, 'code-index'));
+    const prev = text('button', '← Prev', 'code-nav-btn'); prev.type = 'button'; prev.disabled = idx === 0;
+    prev.addEventListener('click', () => { if (idx > 0) showCode(changedFiles[idx - 1].path); });
+    const next = text('button', 'Next →', 'code-nav-btn'); next.type = 'button'; next.disabled = idx === changedFiles.length - 1;
+    next.addEventListener('click', () => { if (idx + 1 < changedFiles.length) showCode(changedFiles[idx + 1].path); });
+    nav.append(prev, next);
+    header.append(nav);
+  }
+  return header;
+}
 async function showCode(path, ref) {
   const selection = ++codeSelection;
   const currentGeneration = generation;
   selectTab('code');
   for (const entry of changedFiles) entry.item.className = entry.path === path ? 'selected' : '';
   const panel = element('code-view'); panel.replaceChildren();
-  panel.append(text('div', path, 'code-path'));
+  panel.append(buildCodeHeader(path));
   if (!snapshotEvidence && !localEvidence) {
     const status = text('p', 'Loading local diff…', 'muted');
     panel.append(status);
@@ -52,7 +99,7 @@ async function showCode(path, ref) {
       const evidence = await evidenceRequest;
       if (generation !== currentGeneration || selection !== codeSelection) return;
       localEvidence = evidence;
-      panel.replaceChildren(text('div', path, 'code-path'));
+      panel.replaceChildren(buildCodeHeader(path));
     } catch (_) {
       if (generation === currentGeneration && selection === codeSelection) {
         evidenceRequest = null;
@@ -69,21 +116,11 @@ async function showCode(path, ref) {
     return;
   }
   panel.append(text('p', `${file.type} · captured diff evidence`, 'code-meta'));
-  const lines = document.createElement('div'); lines.className = 'diff-lines';
-  let oldLine = 0, newLine = 0, active = false, highlighted = null;
-  for (const line of file.excerpt.split('\n')) {
-    const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
-    if (hunk) { oldLine = Number(hunk[1]); newLine = Number(hunk[2]); active = true; lines.append(text('div', line, 'diff-hunk')); continue; }
-    if (!active || !line || ![' ', '+', '-'].includes(line[0])) { if (line) lines.append(text('div', line, 'diff-hunk')); continue; }
-    const kind = line[0]; const oldNumber = kind === '+' ? null : oldLine++; const newNumber = kind === '-' ? null : newLine++;
-    const hit = ref && (ref.side === 'old' ? oldNumber : newNumber) >= ref.start && (ref.side === 'old' ? oldNumber : newNumber) <= ref.end && (ref.side === 'old' ? oldNumber : newNumber) !== null;
-    const row = document.createElement('div'); row.className = `diff-row ${kind === '+' ? 'addition' : kind === '-' ? 'deletion' : 'context'}${hit ? ' highlighted' : ''}`;
-    row.append(text('span', oldNumber ?? '', 'line-number'), text('span', newNumber ?? '', 'line-number'), text('code', line, 'line-code')); lines.append(row); if (hit && !highlighted) highlighted = row;
-  }
+  const {lines, highlighted} = renderDiffExcerpt(file.excerpt, ref);
   panel.append(lines); highlighted?.scrollIntoView?.({block:'center'});
 }
-function citationButton(ref) {
-  const button = text('button', `${ref.path} · ${ref.side} ${ref.start}–${ref.end}`, 'citation'); button.type = 'button';
+function citationButton(ref, label) {
+  const button = text('button', label || `${ref.path} · ${ref.side} ${ref.start}–${ref.end}`, 'citation'); button.type = 'button';
   button.addEventListener('click', () => showCode(ref.path, ref)); return button;
 }
 async function refresh() {
@@ -91,6 +128,7 @@ async function refresh() {
   clearQuiz();
   if (requestController) requestController.abort();
   pending = null;
+  codeSelection = 0;
   snapshotEvidence = null; localEvidence = null; evidenceRequest = null; changedFiles = []; fileGroups = [];
   selectTab('overview'); element('overview-empty').hidden = false; element('quiz-empty').hidden = false;
   element('consent-panel').hidden = true;
@@ -133,6 +171,7 @@ async function refresh() {
       meta.append(text('span', details, 'file-stats'));
       if (file.details) meta.append(text('span', file.details, 'file-stats'));
       item.append(paths, meta); item.setAttribute('role', 'button'); item.setAttribute('tabindex', '0');
+      item.setAttribute('aria-label', `${file.path}, ${file.type}, ${details}`);
       item.addEventListener('click', () => showCode(file.path));
       item.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); showCode(file.path); } });
       changedFiles.push({path:file.path,folder,item}); element('files').append(item);
@@ -206,7 +245,7 @@ function addPreview(container, evidence) {
   for (const file of evidence.files) {
     const detail = document.createElement('details');
     detail.append(text('summary', `${file.path} (${file.type})`));
-    detail.append(text('pre', file.excerpt, 'excerpt'));
+    detail.append(renderDiffExcerpt(file.excerpt).lines);
     container.append(detail);
   }
 }
@@ -249,14 +288,20 @@ async function sendExplanation(consent) {
   try {
     const result = await post('/api/explain', {token, consent}, controller.signal);
     if (currentGeneration !== generation) return;
+    pending = null;
     showExplanation(result);
     element('explain-status').textContent = 'Explanation ready. The provider for this request completed inference.';
   } catch (error) {
-    if (currentGeneration === generation) element('explain-status').textContent = error.name === 'AbortError' ? 'Request canceled.' : error.message;
-  } finally { if (currentGeneration === generation) { pending = null; requestController = null; element('cancel-request').hidden = true; element('explain').disabled = false; } }
+    if (currentGeneration === generation) {
+      element('consent-panel').hidden = false;
+      element('explain-status').textContent = error.name === 'AbortError' ? 'Request canceled.' : error.message;
+    }
+  } finally { if (currentGeneration === generation) { requestController = null; element('cancel-request').hidden = true; element('explain').disabled = false; } }
 }
 element('explain').addEventListener('click', async () => {
   element('explain').disabled = true;
+  pending = null;
+  element('consent-panel').hidden = true;
   clearQuiz();
   element('explanation').hidden = true;
   clearGraph('Preparing a new explanation. The previous change flow has been cleared.');

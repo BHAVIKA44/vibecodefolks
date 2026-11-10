@@ -201,6 +201,8 @@ func TestCodexHarnessUsesLocalCLIAndValidatesResult(t *testing.T) {
 import ("os"; "bytes")
 func main() {
 	if os.Getenv("VIBE_TEST_FAIL") == "auth" { os.Stderr.WriteString("not logged in secret-should-not-escape"); os.Exit(1) }
+	if os.Getenv("VIBE_TEST_FAIL") == "quota" { os.Stderr.Write(bytes.Repeat([]byte("echoed-prompt\n"), 2000)); os.Stderr.WriteString("ERROR: You’ve hit your usage limit. secret-should-not-escape"); os.Exit(1) }
+	if os.Getenv("VIBE_TEST_FAIL") == "model" { os.Stderr.WriteString("ERROR: The model is not supported secret-should-not-escape"); os.Exit(1) }
 	if os.Getenv("VIBE_TEST_FAIL") == "process" { os.Stderr.WriteString("secret-should-not-escape"); os.Exit(1) }
 	var out, schema string
 	for i := 1; i+1 < len(os.Args); i++ {
@@ -237,7 +239,7 @@ func main() {
 	if err != nil || got.Summary != "A change" || got.Graph == nil || got.Quiz == nil || *got.Quiz.Questions[0].CorrectIndex != 1 {
 		t.Fatalf("harness response: %+v %v", got, err)
 	}
-	for _, tc := range []struct{ mode, expected string }{{"auth", "sign-in"}, {"process", "exited"}} {
+	for _, tc := range []struct{ mode, expected string }{{"auth", "sign-in"}, {"quota", "usage or rate limit"}, {"model", "selected model is not supported"}, {"process", "exited"}} {
 		t.Run(tc.mode, func(t *testing.T) {
 			t.Setenv("VIBE_TEST_FAIL", tc.mode)
 			_, err := ProviderFor(cfg).Explain(context.Background(), fixture())

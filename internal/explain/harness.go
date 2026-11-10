@@ -70,8 +70,9 @@ func (p *HarnessProvider) run(ctx context.Context, ev analysis.Evidence, promptI
 	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Dir = dir
 	cmd.Stdin = strings.NewReader(prompt)
-	var stderr bytes.Buffer
-	cmd.Stderr = &limitedDiagnostics{buffer: &stderr, remaining: 16384}
+	var stderr, stdout bytes.Buffer
+	cmd.Stderr = &limitedDiagnostics{buffer: &stderr, maxBytes: 16384}
+	cmd.Stdout = &limitedDiagnostics{buffer: &stdout, maxBytes: 16384}
 	if err := cmd.Run(); err != nil {
 		if errors.Is(ctx.Err(), context.Canceled) {
 			return "", errors.New("Codex request canceled")
@@ -79,10 +80,9 @@ func (p *HarnessProvider) run(ctx context.Context, ev analysis.Evidence, promptI
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return "", errors.New("Codex request timed out. Try again with a smaller change")
 		}
-		// Only fixed classifications leave this process; stderr can contain source or credentials.
-		diagnostic := strings.ToLower(stderr.String())
-		if strings.Contains(diagnostic, "not logged in") || strings.Contains(diagnostic, "please run codex login") {
-			return "", errors.New("Codex reports that sign-in is required. Run codex login and try again")
+		// Only fixed classifications leave this process; output can contain source or credentials.
+		if classified := classifyCodexDiagnostic(stderr.String() + "\n" + stdout.String()); classified != "" {
+			return "", errors.New(classified)
 		}
 		var exitError *exec.ExitError
 		if errors.As(err, &exitError) {
@@ -103,18 +103,41 @@ func (p *HarnessProvider) run(ctx context.Context, ev analysis.Evidence, promptI
 	return string(content), nil
 }
 
-// Capture bounded diagnostics solely for local classification, without exposing them.
+func classifyCodexDiagnostic(raw string) string {
+	diagnostic := strings.ToLower(raw)
+	switch {
+	case strings.Contains(diagnostic, "not logged in") || strings.Contains(diagnostic, "please run codex login") || strings.Contains(diagnostic, "sign-in is required"):
+		return "Codex reports that sign-in is required. Run codex login and try again"
+	case strings.Contains(diagnostic, "usage limit") || strings.Contains(diagnostic, "rate limit") || strings.Contains(diagnostic, "quota") || strings.Contains(diagnostic, "purchase more credits"):
+		return "Codex reported a usage or rate limit. Wait for the limit to reset, switch models, or configure another provider"
+	case strings.Contains(diagnostic, "model is not supported") || strings.Contains(diagnostic, "model not found") || strings.Contains(diagnostic, "invalid model"):
+		return "Codex reported that the selected model is not supported for this account. Clear the optional model field or choose a supported model"
+	default:
+		return ""
+	}
+}
+
+// Capture bounded tail diagnostics solely for local classification, without exposing them.
 type limitedDiagnostics struct {
-	buffer    *bytes.Buffer
-	remaining int
+	buffer   *bytes.Buffer
+	maxBytes int
 }
 
 func (w *limitedDiagnostics) Write(p []byte) (int, error) {
 	n := len(p)
-	if len(p) > w.remaining {
-		p = p[:w.remaining]
+	if w.maxBytes <= 0 {
+		return n, nil
+	}
+	if len(p) >= w.maxBytes {
+		w.buffer.Reset()
+		_, _ = w.buffer.Write(p[len(p)-w.maxBytes:])
+		return n, nil
+	}
+	if overflow := w.buffer.Len() + len(p) - w.maxBytes; overflow > 0 {
+		keep := append([]byte(nil), w.buffer.Bytes()[overflow:]...)
+		w.buffer.Reset()
+		_, _ = w.buffer.Write(keep)
 	}
 	_, _ = w.buffer.Write(p)
-	w.remaining -= len(p)
 	return n, nil
 }
