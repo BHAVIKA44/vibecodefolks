@@ -409,3 +409,52 @@ test('retry button click event does not pass DOM Event as fetch AbortSignal', as
   assert.deepEqual(signals, [undefined, undefined]);
   assert.ok(panel.children.some(e=>e.className==='quiz-options'));
 });
+
+test('lazy model discovery populates available models and preserves provider session state across switches', async () => {
+  const savedPayloads = [];
+  const fetch = (url, options) => {
+    if (url === '/api/harnesses') return Promise.resolve(jsonResponse([]));
+    if (url === '/api/changes') return Promise.resolve(jsonResponse(changes));
+    if (url === '/api/provider/models') {
+      return Promise.resolve(jsonResponse({
+        provider: 'groq',
+        verified: true,
+        key_saved: true,
+        models: ['openai/gpt-oss-120b', 'qwen/qwen3.8-27b', 'openai/gpt-oss-20b'],
+      }));
+    }
+    if (url === '/api/provider') {
+      const parsed = JSON.parse(options.body);
+      savedPayloads.push(parsed);
+      return Promise.resolve(jsonResponse({
+        configured: true,
+        verified: parsed.endpoint.includes('groq'),
+        key_saved: true,
+      }));
+    }
+    throw new Error(`unexpected ${url}`);
+  };
+  const {elements,load}=environment(fetch); load('graph.js'); load('quiz.js'); load('app.js');
+  await new Promise(resolve=>setImmediate(resolve));
+  elements.get('provider-choice').value = 'groq';
+  elements.get('provider-choice').listeners.change();
+  elements.get('provider-key').value = 'test-session-key';
+  await elements.get('provider-discover').listeners.click();
+  assert.equal(elements.get('provider-model-select-label').hidden, false);
+  assert.equal(elements.get('provider-model-select').children.length, 4);
+  elements.get('provider-model-select').value = 'qwen/qwen3.8-27b';
+  elements.get('provider-model-select').listeners.change();
+  assert.equal(elements.get('provider-model').value, 'qwen/qwen3.8-27b');
+  await elements.get('provider-connect').listeners.click();
+  assert.match(elements.get('provider-badge').textContent, /Groq · qwen\/qwen3\.8-27b \(verified\)/);
+  assert.equal(elements.get('provider-key').placeholder, 'Saved for session (leave blank to keep)');
+
+  // Switch to OpenAI (unverified) and back to Groq
+  elements.get('provider-choice').value = 'openai';
+  elements.get('provider-choice').listeners.change();
+  assert.equal(elements.get('provider-model-select-label').hidden, true);
+  elements.get('provider-choice').value = 'groq';
+  elements.get('provider-choice').listeners.change();
+  assert.equal(elements.get('provider-model').value, 'qwen/qwen3.8-27b');
+  assert.equal(elements.get('provider-model-select-label').hidden, false);
+});

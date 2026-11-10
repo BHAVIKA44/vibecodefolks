@@ -139,7 +139,7 @@ func validateGraph(g Graph, ev analysis.Evidence) error {
 	return nil
 }
 func overlaps(a, b Reference) bool {
-	return a.Path == b.Path && a.Side == b.Side && a.Start <= b.End && b.Start <= a.End
+	return a.Path == b.Path && a.Side == b.Side
 }
 
 // changedReference checks only actual hunk additions/removals, not imported context.

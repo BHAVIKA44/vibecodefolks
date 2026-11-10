@@ -275,3 +275,4 @@ We compared reviewing `oss-order-ledger` and `oss-collab-web` in VibeCodeFolks a
    3. **Working-tree-only diff scope:** Currently inspects uncommitted working-tree + untracked changes against `HEAD`; adding a commit-range or branch selector (`HEAD~1..HEAD` or `main..HEAD`) would let engineers review already-committed AI PRs just as easily.
 7. **Is this ready to merge to `main` and tag a release?**
    **Yes.** All 7 product/code fixes on `qa/argon-manual-qa` are clean, well-tested (`go test ./... -race` and `22/22` frontend tests), and verified in real Google Chrome. Once you approve, `qa/argon-manual-qa` is ready to be merged into `main` and tagged.
+

@@ -173,4 +173,9 @@ func TestDedicatedQuizDistinctFeedbackAndCaseSensitiveOutcomes(t *testing.T) {
 	if quiz, diagnostic, _ := decodeDedicatedQuiz(string(raw), graphFixture()); quiz != nil || diagnostic != "invalid_structure" {
 		t.Fatalf("duplicate feedback accepted: %s", diagnostic)
 	}
+	q.Questions[0].OptionExplanations = []string{"Correct: option 0", "Incorrect: option 1", "Incorrect: option 2", "Incorrect: option 3"}
+	raw, _ = json.Marshal(q)
+	if quiz, diagnostic, _ := decodeDedicatedQuiz(string(raw), graphFixture()); quiz != nil || diagnostic != "invalid_structure" {
+		t.Fatalf("contradictory correct_index vs option_explanations accepted: %s", diagnostic)
+	}
 }

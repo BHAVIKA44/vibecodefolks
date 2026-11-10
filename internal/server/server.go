@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -39,6 +40,30 @@ type state struct {
 	requests map[string]prepared
 	quizzes  map[string]quizSession
 	config   *explain.Config
+	keys     map[string]string
+	verified map[string]bool
+}
+
+func (s *state) resolveKeyLocked(endpoint, supplied string) string {
+	if supplied != "" {
+		return supplied
+	}
+	id := explain.ProviderID(endpoint, "")
+	if k := s.keys[id]; k != "" {
+		return k
+	}
+	if k := s.keys[endpoint]; k != "" {
+		return k
+	}
+	if id == "groq" {
+		if k := os.Getenv("GROQ_API_KEY"); k != "" {
+			return k
+		}
+	}
+	if os.Getenv("VIBECODEFOLKS_AI_ENDPOINT") == endpoint {
+		return os.Getenv("VIBECODEFOLKS_AI_API_KEY")
+	}
+	return ""
 }
 
 // Caller holds s.mu. Expired sessions release their captured evidence and provider
@@ -54,7 +79,12 @@ func (s *state) addQuizSessionLocked(token string, p prepared, now time.Time, li
 }
 
 func Handler(dir string, assets fs.FS, host string) http.Handler {
-	s := &state{requests: map[string]prepared{}, quizzes: map[string]quizSession{}}
+	s := &state{
+		requests: map[string]prepared{},
+		quizzes:  map[string]quizSession{},
+		keys:     map[string]string{},
+		verified: map[string]bool{},
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/harnesses", func(w http.ResponseWriter, r *http.Request) {
 		if !method(w, r, "GET") {
@@ -87,6 +117,65 @@ func Handler(dir string, assets fs.FS, host string) http.Handler {
 		}
 		writeJSON(w, result)
 	})
+	mux.HandleFunc("/api/provider/models", func(w http.ResponseWriter, r *http.Request) {
+		if !method(w, r, "POST") || !jsonRequest(w, r) {
+			return
+		}
+		var in struct {
+			Endpoint string `json:"endpoint"`
+			APIKey   string `json:"api_key"`
+			Harness  string `json:"harness"`
+		}
+		if json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&in) != nil {
+			writeError(w, http.StatusBadRequest, "Invalid model discovery request")
+			return
+		}
+		if in.Harness != "" {
+			if in.Harness != "codex" {
+				writeError(w, http.StatusBadRequest, "unsupported local harness")
+				return
+			}
+			if _, lookupErr := exec.LookPath("codex"); lookupErr != nil {
+				writeError(w, http.StatusBadRequest, "Codex CLI is not installed or is missing from the server PATH")
+				return
+			}
+			writeJSON(w, map[string]any{
+				"provider": "codex",
+				"verified": false,
+				"models":   []string{},
+				"message":  "Codex CLI found on PATH. Leave model blank to use your Codex default, or enter a custom model ID.",
+			})
+			return
+		}
+		s.mu.Lock()
+		key := s.resolveKeyLocked(in.Endpoint, in.APIKey)
+		s.mu.Unlock()
+		cfg, err := explain.NewConfig(in.Endpoint, "discovery", key)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		models, err := explain.DiscoverModels(r.Context(), cfg)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		provID := explain.ProviderID(cfg.Endpoint, "")
+		s.mu.Lock()
+		if key != "" {
+			s.keys[provID] = key
+			s.keys[cfg.Endpoint] = key
+		}
+		s.verified[provID] = true
+		s.verified[cfg.Endpoint] = true
+		s.mu.Unlock()
+		writeJSON(w, map[string]any{
+			"provider":  provID,
+			"verified":  true,
+			"key_saved": key != "",
+			"models":    models,
+		})
+	})
 	mux.HandleFunc("/api/provider", func(w http.ResponseWriter, r *http.Request) {
 		if !method(w, r, "POST") || !jsonRequest(w, r) {
 			return
@@ -101,7 +190,10 @@ func Handler(dir string, assets fs.FS, host string) http.Handler {
 			writeError(w, http.StatusBadRequest, "Invalid provider setup")
 			return
 		}
-		cfg, err := explain.NewConfig(in.Endpoint, in.Model, in.APIKey)
+		s.mu.Lock()
+		key := s.resolveKeyLocked(in.Endpoint, in.APIKey)
+		s.mu.Unlock()
+		cfg, err := explain.NewConfig(in.Endpoint, in.Model, key)
 		if in.Harness != "" {
 			cfg, err = explain.NewHarnessConfig(in.Harness)
 			model := strings.TrimSpace(in.Model)
@@ -116,14 +208,33 @@ func Handler(dir string, assets fs.FS, host string) http.Handler {
 				}
 			}
 		}
+		if err == nil {
+			err = explain.ValidateModelChoice(cfg)
+		}
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		provID := explain.ProviderID(cfg.Endpoint, cfg.Harness)
 		s.mu.Lock()
+		if cfg.Harness == "" && cfg.APIKey != "" {
+			s.keys[provID] = cfg.APIKey
+			s.keys[cfg.Endpoint] = cfg.APIKey
+		}
+		if in.APIKey != "" && in.APIKey != key {
+			s.verified[provID] = false
+			s.verified[cfg.Endpoint] = false
+		}
 		s.config = &cfg
+		verified := s.verified[provID] || s.verified[cfg.Endpoint]
 		s.mu.Unlock()
-		writeJSON(w, map[string]bool{"configured": true})
+		writeJSON(w, map[string]any{
+			"configured": true,
+			"verified":   verified,
+			"key_saved":  cfg.APIKey != "",
+			"provider":   provID,
+			"model":      cfg.Model,
+		})
 	})
 	mux.HandleFunc("/api/evidence", func(w http.ResponseWriter, r *http.Request) {
 		if !method(w, r, "GET") {
@@ -261,6 +372,11 @@ func Handler(dir string, assets fs.FS, host string) http.Handler {
 		sessionToken := hex.EncodeToString(sessionBytes)
 		s.mu.Lock()
 		delete(s.requests, in.Token)
+		provID := explain.ProviderID(p.config.Endpoint, p.config.Harness)
+		s.verified[provID] = true
+		if p.config.Endpoint != "" {
+			s.verified[p.config.Endpoint] = true
+		}
 		now := time.Now()
 		for key, session := range s.quizzes {
 			if now.After(session.expires) && !session.busy {

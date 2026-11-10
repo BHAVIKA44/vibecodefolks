@@ -183,16 +183,66 @@ async function refresh() {
   } finally { button.disabled = false; element('explain').disabled = !loaded; }
 }
 element('refresh').addEventListener('click', refresh);
-const providers = {codex:['','','Codex'],groq:['https://api.groq.com/openai/v1/chat/completions','openai/gpt-oss-20b','Groq'],openai:['https://api.openai.com/v1/chat/completions','gpt-4.1-mini','OpenAI'],gemini:['https://generativelanguage.googleapis.com/v1beta/openai/chat/completions','gemini-3.8-flash','Gemini'],xai:['https://api.x.ai/v1/responses','grok-4.7','Grok'],ollama:['http://127.0.0.1:11434/v1/chat/completions','llama3.2','Ollama'],lmstudio:['http://127.0.0.1:1234/v1/chat/completions','local-model','LM Studio']};
+const providers = {codex:['','','Codex'],groq:['https://api.groq.com/openai/v1/chat/completions','openai/gpt-oss-120b','Groq'],openai:['https://api.openai.com/v1/chat/completions','gpt-4.1-mini','OpenAI'],gemini:['https://generativelanguage.googleapis.com/v1beta/openai/chat/completions','gemini-2.5-flash','Gemini'],xai:['https://api.x.ai/v1/responses','grok-3-mini','Grok'],ollama:['http://127.0.0.1:11434/v1/chat/completions','qwen2.5-coder:7b','Ollama'],lmstudio:['http://127.0.0.1:1234/v1/chat/completions','local-model','LM Studio']};
+const providerMemory = {};
+let activeProviderChoice = null;
+function getProviderMemory(choice) {
+  if (!providerMemory[choice]) {
+    providerMemory[choice] = {model: providers[choice][1], models: [], configured: false, verified: false, keySaved: false};
+  }
+  return providerMemory[choice];
+}
+function updateProviderBadge() {
+  const badge = element('provider-badge');
+  if (!activeProviderChoice) { badge.hidden = true; return; }
+  const [,,name] = providers[activeProviderChoice];
+  const mem = getProviderMemory(activeProviderChoice);
+  const modelLabel = mem.model || (activeProviderChoice === 'codex' ? 'default' : '');
+  const stateLabel = mem.verified ? 'verified' : 'configured, unverified';
+  badge.textContent = `${name}${modelLabel ? ` · ${modelLabel}` : ''} (${stateLabel})`;
+  badge.hidden = false;
+}
+function syncModelSelect(choice) {
+  const mem = getProviderMemory(choice);
+  const selectLabel = element('provider-model-select-label');
+  const select = element('provider-model-select');
+  if (!mem.models.length) {
+    selectLabel.hidden = true;
+    select.replaceChildren();
+    return;
+  }
+  const children = [];
+  for (const m of mem.models) {
+    const opt = text('option', m);
+    opt.value = m;
+    children.push(opt);
+  }
+  const customOpt = text('option', 'Custom model ID…');
+  customOpt.value = '__custom__';
+  children.push(customOpt);
+  select.replaceChildren(...children);
+  select.value = mem.models.includes(mem.model) ? mem.model : '__custom__';
+  selectLabel.hidden = false;
+}
 function showProviderFields() {
   const choice = element('provider-choice').value || 'codex';
   const [,,name] = providers[choice];
-  element('provider-model').value = providers[choice][1];
+  const mem = getProviderMemory(choice);
+  element('provider-model').value = mem.model;
   element('provider-model-label').hidden = false;
   element('provider-model').placeholder = choice === 'codex' ? 'Use Codex default' : 'Enter model ID';
-  element('provider-key-label').hidden = ['codex', 'ollama', 'lmstudio'].includes(choice);
+  const needsKey = !['codex', 'ollama', 'lmstudio'].includes(choice);
+  element('provider-key-label').hidden = !needsKey;
   element('provider-key').value = '';
-  element('provider-status').textContent = `${name} settings are applied when you choose Save settings.`;
+  element('provider-key').placeholder = needsKey && mem.keySaved ? 'Saved for session (leave blank to keep)' : '';
+  element('provider-discover').textContent = choice === 'codex' ? 'Check CLI' : 'Load models';
+  syncModelSelect(choice);
+  if (mem.configured) {
+    const stateText = mem.verified ? 'verified' : 'configured (unverified until you load models or request an explanation)';
+    element('provider-status').textContent = `${name} (${mem.model || 'default'}) is ${stateText}.`;
+  } else {
+    element('provider-status').textContent = `${name} settings are applied when you choose Save settings.`;
+  }
 }
 async function discoverHarnesses() {
   const status = element('harness-status');
@@ -210,11 +260,72 @@ async function discoverHarnesses() {
   }
 }
 element('provider-choice').addEventListener('change', showProviderFields);
+element('provider-model-select').addEventListener('change', () => {
+  const choice = element('provider-choice').value || 'codex';
+  const mem = getProviderMemory(choice);
+  const val = element('provider-model-select').value;
+  if (val && val !== '__custom__') {
+    mem.model = val;
+    element('provider-model').value = val;
+  }
+});
+element('provider-model').addEventListener('input', () => {
+  const choice = element('provider-choice').value || 'codex';
+  const mem = getProviderMemory(choice);
+  mem.model = element('provider-model').value.trim();
+  if (mem.models.length) {
+    element('provider-model-select').value = mem.models.includes(mem.model) ? mem.model : '__custom__';
+  }
+});
 showProviderFields();
 discoverHarnesses();
+element('provider-discover').addEventListener('click', async () => {
+  const choice = element('provider-choice').value || 'codex';
+  const [endpoint,,name] = providers[choice];
+  const mem = getProviderMemory(choice);
+  const discoverBtn = element('provider-discover');
+  const connectBtn = element('provider-connect');
+  const status = element('provider-status');
+  discoverBtn.disabled = true;
+  connectBtn.disabled = true;
+  element('provider-choice').disabled = true;
+  status.textContent = choice === 'codex' ? 'Checking Codex CLI on PATH…' : `Querying available models from ${name}…`;
+  try {
+    const payload = choice === 'codex' ? {harness: 'codex'} : {endpoint, api_key: element('provider-key').value};
+    const res = await post('/api/provider/models', payload);
+    element('provider-key').value = '';
+    if (res.key_saved) {
+      mem.keySaved = true;
+      element('provider-key').placeholder = 'Saved for session (leave blank to keep)';
+    }
+    if (choice === 'codex') {
+      status.textContent = res.message || 'Codex CLI found on PATH.';
+      return;
+    }
+    const models = Array.isArray(res.models) ? res.models : [];
+    mem.models = models;
+    mem.verified = Boolean(res.verified);
+    if (models.length > 0 && (!mem.model || !models.includes(mem.model))) {
+      mem.model = models[0];
+      element('provider-model').value = models[0];
+    }
+    syncModelSelect(choice);
+    if (activeProviderChoice === choice) updateProviderBadge();
+    status.textContent = models.length
+      ? `Verified ${name} connection (${models.length} chat/code model${models.length === 1 ? '' : 's'} discovered). Choose a model and select Save settings.`
+      : `Connected to ${name}, but no models were listed. Enter a model ID and select Save settings.`;
+  } catch (error) {
+    status.textContent = error.message;
+  } finally {
+    discoverBtn.disabled = false;
+    connectBtn.disabled = false;
+    element('provider-choice').disabled = false;
+  }
+});
 element('provider-connect').addEventListener('click', async () => {
   const choice = element('provider-choice').value || 'codex';
   const [endpoint,,name] = providers[choice];
+  const mem = getProviderMemory(choice);
   const model = element('provider-model').value.trim();
   const setup = choice === 'codex' ? {harness: 'codex', model} : {endpoint, model, api_key: element('provider-key').value};
   const button = element('provider-connect');
@@ -222,11 +333,25 @@ element('provider-connect').addEventListener('click', async () => {
   button.disabled = true;
   element('provider-choice').disabled = true;
   try {
-    await post('/api/provider', setup);
+    const res = await post('/api/provider', setup);
     element('provider-key').value = '';
-    status.textContent = choice === 'codex'
-      ? 'Codex CLI found. Settings saved for this session. Sign-in and model access are checked when you request an explanation.'
-      : `${name} settings saved for this session. The key and model are checked when you request an explanation.`;
+    mem.model = model;
+    mem.configured = true;
+    mem.keySaved = Boolean(res.key_saved) || mem.keySaved;
+    const modelInDiscovered = mem.models.length > 0 && mem.models.includes(model);
+    mem.verified = Boolean(res.verified) && (!mem.models.length || modelInDiscovered);
+    if (!['codex', 'ollama', 'lmstudio'].includes(choice) && mem.keySaved) {
+      element('provider-key').placeholder = 'Saved for session (leave blank to keep)';
+    }
+    activeProviderChoice = choice;
+    updateProviderBadge();
+    if (choice === 'codex') {
+      status.textContent = 'Codex CLI found. Settings saved for this session (unverified until you request an explanation).';
+    } else if (mem.verified) {
+      status.textContent = `${name} (${model}) settings saved for this session and verified against available models.`;
+    } else {
+      status.textContent = `${name} (${model}) settings saved for this session. The key and model are checked when you load models or request an explanation.`;
+    }
   } catch (error) {
     status.textContent = error.message;
   } finally {
@@ -289,6 +414,10 @@ async function sendExplanation(consent) {
     const result = await post('/api/explain', {token, consent}, controller.signal);
     if (currentGeneration !== generation) return;
     pending = null;
+    if (activeProviderChoice) {
+      getProviderMemory(activeProviderChoice).verified = true;
+      updateProviderBadge();
+    }
     showExplanation(result);
     element('explain-status').textContent = 'Explanation ready. The provider for this request completed inference.';
   } catch (error) {
