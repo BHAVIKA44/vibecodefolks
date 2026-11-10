@@ -24,6 +24,7 @@ type prepared struct {
 	expires  time.Time
 	snapshot string
 	captured time.Time
+	inUse    bool // true while a provider call is in progress; allows retry on failure
 }
 type quizSession struct {
 	prepared prepared
@@ -218,20 +219,35 @@ func Handler(dir string, assets fs.FS, host string) http.Handler {
 		}
 		s.mu.Lock()
 		p, ok := s.requests[in.Token]
-		if ok && (p.config.Local || in.Consent) {
-			delete(s.requests, in.Token)
-		}
-		s.mu.Unlock()
 		if !ok || time.Now().After(p.expires) {
+			s.mu.Unlock()
+			writeError(w, http.StatusBadRequest, "Prepared evidence expired or was already used; try again")
+			return
+		}
+		if p.inUse {
+			s.mu.Unlock()
 			writeError(w, http.StatusBadRequest, "Prepared evidence expired or was already used; try again")
 			return
 		}
 		if !p.config.Local && !in.Consent {
+			s.mu.Unlock()
 			writeError(w, http.StatusForbidden, "Explicit consent is required before sending evidence to a remote provider")
 			return
 		}
+		// Mark the token as in-use to prevent concurrent reuse while still allowing
+		// the user to retry on a transient provider failure (token is only deleted on success).
+		p.inUse = true
+		s.requests[in.Token] = p
+		s.mu.Unlock()
 		result, err := explain.ProviderFor(p.config).Explain(r.Context(), p.evidence)
 		if err != nil {
+			// Release the in-use lock so the user can retry with the same token.
+			s.mu.Lock()
+			if entry, still := s.requests[in.Token]; still && entry.inUse {
+				entry.inUse = false
+				s.requests[in.Token] = entry
+			}
+			s.mu.Unlock()
 			writeError(w, http.StatusBadGateway, err.Error())
 			return
 		}
@@ -242,6 +258,7 @@ func Handler(dir string, assets fs.FS, host string) http.Handler {
 		}
 		sessionToken := hex.EncodeToString(sessionBytes)
 		s.mu.Lock()
+		delete(s.requests, in.Token)
 		now := time.Now()
 		for key, session := range s.quizzes {
 			if now.After(session.expires) && !session.busy {

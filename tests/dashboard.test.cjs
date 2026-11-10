@@ -310,3 +310,13 @@ test('cancel during post-generation freshness check does not display the quiz', 
   assert.match(elements.get('quiz-status').textContent, /canceled/i);
   assert.equal(elements.get('quiz-generate').hidden, false);
 });
+
+test('send-evidence button when pending is null does not throw', async () => {
+  const fetch = () => Promise.resolve(jsonResponse({...changes, total_files: 1}));
+  const {elements,load}=environment(fetch); load('graph.js'); load('quiz.js'); load('app.js');
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.doesNotThrow(() => {
+    elements.get('send-evidence').listeners.click();
+  });
+  assert.match(elements.get('explain-status').textContent, /No prepared evidence/);
+});

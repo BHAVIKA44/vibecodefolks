@@ -278,6 +278,7 @@ element('explain').addEventListener('click', async () => {
   } catch (error) { if (currentGeneration === generation) { element('explain-status').textContent = error.message; element('explain').disabled = false; } }
 });
 element('send-evidence').addEventListener('click', () => {
+  if (!pending) { element('explain-status').textContent = 'No prepared evidence; choose Explain changes again.'; return; }
   if (!pending.local && !element('consent').checked) { element('explain-status').textContent = 'Please check the consent box before sending.'; return; }
   sendExplanation(!pending.local && element('consent').checked);
 });
