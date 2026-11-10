@@ -5,9 +5,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"io/fs"
 	"net/http"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -23,17 +25,67 @@ type prepared struct {
 	snapshot string
 	captured time.Time
 }
+type quizSession struct {
+	prepared prepared
+	expires  time.Time
+	busy     bool
+	timer    *time.Timer
+}
 type state struct {
 	mu       sync.Mutex
 	requests map[string]prepared
+	quizzes  map[string]quizSession
 	config   *explain.Config
 }
 
+// Caller holds s.mu. Expired sessions release their captured evidence and provider
+// configuration even when no later explanation request arrives.
+func (s *state) addQuizSessionLocked(token string, p prepared, now time.Time, lifetime time.Duration) {
+	session := quizSession{prepared: p, expires: now.Add(lifetime)}
+	session.timer = time.AfterFunc(lifetime, func() {
+		s.mu.Lock()
+		delete(s.quizzes, token)
+		s.mu.Unlock()
+	})
+	s.quizzes[token] = session
+}
+
 func Handler(dir string, assets fs.FS, host string) http.Handler {
-	s := &state{requests: map[string]prepared{}}
+	s := &state{requests: map[string]prepared{}, quizzes: map[string]quizSession{}}
 	mux := http.NewServeMux()
+	mux.HandleFunc("/api/harnesses", func(w http.ResponseWriter, r *http.Request) {
+		if !method(w, r, "GET") {
+			return
+		}
+		type harnessStatus struct {
+			Name      string `json:"name"`
+			Installed bool   `json:"installed"`
+			Supported bool   `json:"supported"`
+		}
+		candidates := []struct {
+			name     string
+			commands []string
+		}{
+			{"codex", []string{"codex"}}, {"claude", []string{"claude"}},
+			{"gemini", []string{"gemini"}}, {"cursor", []string{"cursor-agent"}},
+			{"antigravity", []string{"agy"}}, {"opencode", []string{"opencode"}},
+			{"aider", []string{"aider"}}, {"goose", []string{"goose"}},
+		}
+		result := make([]harnessStatus, 0, len(candidates))
+		for _, candidate := range candidates {
+			installed := false
+			for _, command := range candidate.commands {
+				if _, err := exec.LookPath(command); err == nil {
+					installed = true
+					break
+				}
+			}
+			result = append(result, harnessStatus{Name: candidate.name, Installed: installed, Supported: candidate.name == "codex"})
+		}
+		writeJSON(w, result)
+	})
 	mux.HandleFunc("/api/provider", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || !jsonRequest(w, r) {
+		if !method(w, r, "POST") || !jsonRequest(w, r) {
 			return
 		}
 		var in struct {
@@ -49,6 +101,17 @@ func Handler(dir string, assets fs.FS, host string) http.Handler {
 		cfg, err := explain.NewConfig(in.Endpoint, in.Model, in.APIKey)
 		if in.Harness != "" {
 			cfg, err = explain.NewHarnessConfig(in.Harness)
+			model := strings.TrimSpace(in.Model)
+			if err == nil && (len(model) > 200 || strings.HasPrefix(model, "-") || strings.ContainsAny(in.Model, "\r\n")) {
+				err = errors.New("Invalid Codex model name")
+			}
+			cfg.Model = model
+			if err == nil {
+				if _, lookupErr := exec.LookPath("codex"); lookupErr != nil {
+					writeError(w, http.StatusBadRequest, "Codex CLI is not installed or is missing from the server PATH")
+					return
+				}
+			}
 		}
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
@@ -58,6 +121,17 @@ func Handler(dir string, assets fs.FS, host string) http.Handler {
 		s.config = &cfg
 		s.mu.Unlock()
 		writeJSON(w, map[string]bool{"configured": true})
+	})
+	mux.HandleFunc("/api/evidence", func(w http.ResponseWriter, r *http.Request) {
+		if !method(w, r, "GET") {
+			return
+		}
+		ev, err := analysis.Collect(dir)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "Could not collect local diff evidence")
+			return
+		}
+		writeJSON(w, ev)
 	})
 	mux.HandleFunc("/api/changes", func(w http.ResponseWriter, r *http.Request) {
 		if !method(w, r, "GET") {
@@ -161,7 +235,114 @@ func Handler(dir string, assets fs.FS, host string) http.Handler {
 			writeError(w, http.StatusBadGateway, err.Error())
 			return
 		}
-		writeJSON(w, map[string]any{"explanation": result, "evidence": p.evidence, "snapshot": p.snapshot, "captured_at": p.captured.UTC()})
+		sessionBytes := make([]byte, 32)
+		if _, err := rand.Read(sessionBytes); err != nil {
+			writeError(w, http.StatusInternalServerError, "Could not prepare quiz session")
+			return
+		}
+		sessionToken := hex.EncodeToString(sessionBytes)
+		s.mu.Lock()
+		now := time.Now()
+		for key, session := range s.quizzes {
+			if now.After(session.expires) && !session.busy {
+				session.timer.Stop()
+				delete(s.quizzes, key)
+			}
+		}
+		if len(s.quizzes) >= 16 {
+			var oldestKey string
+			var oldest time.Time
+			for key, session := range s.quizzes {
+				if !session.busy && (oldestKey == "" || session.expires.Before(oldest)) {
+					oldestKey, oldest = key, session.expires
+				}
+			}
+			if oldestKey != "" {
+				s.quizzes[oldestKey].timer.Stop()
+				delete(s.quizzes, oldestKey)
+			} else {
+				sessionToken = ""
+			}
+		}
+		if sessionToken != "" {
+			s.addQuizSessionLocked(sessionToken, p, now, 30*time.Minute)
+		}
+		s.mu.Unlock()
+		writeJSON(w, map[string]any{"explanation": result, "evidence": p.evidence, "snapshot": p.snapshot, "captured_at": p.captured.UTC(), "quiz_session": sessionToken, "quiz_local": p.config.Local, "quiz_provider": p.config.PublicEndpoint(), "quiz_model": p.config.Model})
+	})
+	mux.HandleFunc("/api/quiz/generate", func(w http.ResponseWriter, r *http.Request) {
+		if !method(w, r, "POST") || !jsonRequest(w, r) {
+			return
+		}
+		var in struct {
+			Session  string `json:"session"`
+			Snapshot string `json:"snapshot"`
+			Consent  bool   `json:"consent"`
+		}
+		dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
+		dec.DisallowUnknownFields()
+		if dec.Decode(&in) != nil || len(in.Session) != 64 || len(in.Snapshot) != 64 {
+			writeError(w, http.StatusBadRequest, "Invalid quiz request")
+			return
+		}
+		var extra any
+		if dec.Decode(&extra) != io.EOF {
+			writeError(w, http.StatusBadRequest, "Invalid quiz request")
+			return
+		}
+		s.mu.Lock()
+		session, ok := s.quizzes[in.Session]
+		if !ok || time.Now().After(session.expires) || session.prepared.snapshot != in.Snapshot {
+			s.mu.Unlock()
+			writeError(w, http.StatusBadRequest, "Quiz session expired or does not match this snapshot. Explain the changes again")
+			return
+		}
+		if !session.prepared.config.Local && !in.Consent {
+			s.mu.Unlock()
+			writeError(w, http.StatusForbidden, "Explicit consent is required before sending evidence for quiz generation")
+			return
+		}
+		if session.busy {
+			s.mu.Unlock()
+			writeError(w, http.StatusConflict, "Quiz generation is already running")
+			return
+		}
+		session.busy = true
+		s.quizzes[in.Session] = session
+		s.mu.Unlock()
+		defer func() {
+			s.mu.Lock()
+			current, exists := s.quizzes[in.Session]
+			if exists {
+				current.busy = false
+				s.quizzes[in.Session] = current
+			}
+			s.mu.Unlock()
+		}()
+		fresh, err := evidenceFresh(dir, in.Snapshot)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "Could not check the current evidence snapshot")
+			return
+		}
+		if !fresh {
+			writeError(w, http.StatusConflict, "The evidence changed. Refresh and explain the changes again")
+			return
+		}
+		quiz, diagnostic, err := explain.GenerateQuiz(r.Context(), session.prepared.config, session.prepared.evidence)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		fresh, err = evidenceFresh(dir, in.Snapshot)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "Could not check the current evidence snapshot")
+			return
+		}
+		if !fresh {
+			writeError(w, http.StatusConflict, "The evidence changed during generation. Refresh and explain the changes again")
+			return
+		}
+		writeJSON(w, map[string]any{"quiz": quiz, "quiz_diagnostic": diagnostic, "snapshot": in.Snapshot})
 	})
 	mux.HandleFunc("/api/quiz/fresh", func(w http.ResponseWriter, r *http.Request) {
 		if !method(w, r, "POST") || !jsonRequest(w, r) {
@@ -181,18 +362,12 @@ func Handler(dir string, assets fs.FS, host string) http.Handler {
 			writeError(w, http.StatusBadRequest, "Invalid snapshot")
 			return
 		}
-		ev, err := analysis.Collect(dir)
+		fresh, err := evidenceFresh(dir, in.Snapshot)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "Could not check the current evidence snapshot")
 			return
 		}
-		data, err := json.Marshal(ev)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "Could not check the current evidence snapshot")
-			return
-		}
-		digest := sha256.Sum256(data)
-		writeJSON(w, map[string]bool{"fresh": hex.EncodeToString(digest[:]) == in.Snapshot})
+		writeJSON(w, map[string]bool{"fresh": fresh})
 	})
 	mux.Handle("/", http.FileServer(http.FS(assets)))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -220,6 +395,19 @@ func Handler(dir string, assets fs.FS, host string) http.Handler {
 		mux.ServeHTTP(w, r)
 	})
 }
+func evidenceFresh(dir, snapshot string) (bool, error) {
+	ev, err := analysis.Collect(dir)
+	if err != nil {
+		return false, err
+	}
+	data, err := json.Marshal(ev)
+	if err != nil {
+		return false, err
+	}
+	digest := sha256.Sum256(data)
+	return hex.EncodeToString(digest[:]) == snapshot, nil
+}
+
 func skippedSummary(files []analysis.SkippedFile) string {
 	if len(files) == 0 {
 		return "none"

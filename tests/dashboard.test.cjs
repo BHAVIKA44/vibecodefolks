@@ -51,7 +51,7 @@ test('refresh invalidates an in-flight preparation and hides old explanations', 
   await Promise.all([pending,refreshing]);
   assert.equal(elements.get('consent-panel').hidden,true);
   assert.equal(elements.get('explanation').hidden,true);
-  assert.match(elements.get('explain-status').textContent,/Previous explanation cleared/);
+  assert.match(elements.get('explain-status').textContent,/Previous explanation cleared|Select a file/);
 });
 
 test('refresh discards an in-flight explanation and rendering makes no extra AI request', async () => {
@@ -72,13 +72,13 @@ test('refresh discards an in-flight explanation and rendering makes no extra AI 
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(aiRequests,1);
   assert.equal(elements.get('explanation').hidden,true);
-  assert.match(elements.get('explain-status').textContent,/Previous explanation cleared/);
+  assert.match(elements.get('explain-status').textContent,/Previous explanation cleared|Select a file/);
 });
 
-const sampleQuiz = {questions:[{id:'one',text:'What changed <script>?',options:['First','Second','Third','Fourth'],correct_index:1,explanation:'The cited line shows the second option.',category:'change',references:[{path:'file.js',side:'new',start:1,end:1}]}]};
+const sampleQuiz = {questions:[{id:'one',text:'What changed <script>?',options:['First','Second','Third','Fourth'],correct_index:1,explanation:'The cited line shows the second option.',option_explanations:['The first option misses the changed branch.','The second option follows the branch.','The third option skips the check.','The fourth option adds a nonexistent step.'],category:'change',references:[{path:'file.js',side:'new',start:1,end:1}]}]};
 test('quiz scores answers, explains mistakes, retries and makes no AI requests', async () => {
   let aiCalls = 0, freshCalls = 0;
-  const fetch = url => { if(url === '/api/quiz/fresh') {freshCalls++; return Promise.resolve(jsonResponse({fresh:true}));} if(url === '/api/changes') return Promise.resolve(jsonResponse(changes)); aiCalls++; throw Error('unexpected AI request'); };
+  const fetch = url => { if(url === '/api/harnesses') return Promise.resolve(jsonResponse([])); if(url === '/api/quiz/fresh') {freshCalls++; return Promise.resolve(jsonResponse({fresh:true}));} if(url === '/api/changes') return Promise.resolve(jsonResponse(changes)); aiCalls++; throw Error('unexpected AI request'); };
   const {elements,context,load} = environment(fetch); load('graph.js'); load('quiz.js'); load('app.js');
   await new Promise(resolve => setImmediate(resolve));
   context.result={snapshot:'a'.repeat(64),explanation:{quiz:sampleQuiz},evidence:{files:[{path:'file.js',excerpt:'<img onerror=alert(1)>'}]}};
@@ -86,16 +86,21 @@ test('quiz scores answers, explains mistakes, retries and makes no AI requests',
   await elements.get('quiz-start').listeners.click();
   const panel=elements.get('quiz-content');
   assert.match(allText(panel),/<script>/);
+  assert.match(allText(panel),/<img/);
+  assert.doesNotMatch(allText(panel),/Correct answer:/);
   let options=panel.children.find(e=>e.className==='quiz-options');
   options.children[0].listeners.click();
   assert.ok(options.children.every(e=>e.disabled));
   assert.match(allText(panel),/Correct answer: B\. Second/);
   assert.match(allText(panel),/cited line/);
+  assert.match(allText(panel),/Your choice: The first option misses the changed branch/);
   assert.match(allText(panel),/<img/);
   let feedback=panel.children.find(e=>e.className==='quiz-feedback');
   feedback.children.find(e=>e.textContent==='See score').listeners.click();
   assert.match(allText(panel),/0 \/ 1 correct/);
-  await panel.children.find(e=>e.textContent==='Retry Quiz').listeners.click();
+  assert.match(allText(panel),/Revisit.*change/);
+  assert.match(allText(panel),/Your answer: First/);
+  await panel.children.find(e=>e.textContent==='Retry same questions').listeners.click();
   options=panel.children.find(e=>e.className==='quiz-options'); options.children[1].listeners.click();
   feedback=panel.children.find(e=>e.className==='quiz-feedback'); feedback.children.find(e=>e.textContent==='See score').listeners.click();
   assert.match(allText(panel),/1 \/ 1 correct/);
@@ -192,4 +197,116 @@ test('a new explanation attempt clears a stale change flow before contacting the
   await elements.get('explain').listeners.click();
   assert.equal(elements.get('change-graph').children.length,0);
   assert.match(elements.get('graph-notice').textContent,/Preparing a new explanation/);
+});
+
+test('opens a changed file before configuring or invoking an AI provider', async () => {
+  const path = 'server.py';
+  const calls = [];
+  const fetch = url => {
+    calls.push(url);
+    if (url === '/api/changes') return Promise.resolve(jsonResponse({...changes,total_files:1,files:[{path,type:'modified'}]}));
+    if (url === '/api/evidence') return Promise.resolve(jsonResponse({files:[{path,type:'modified',excerpt:'@@ -1 +1 @@\n-return 0\n+return 1'}],skipped:[]}));
+    throw Error('unexpected provider call');
+  };
+  const {elements,load} = environment(fetch);
+  load('graph.js'); load('quiz.js'); load('app.js');
+  await new Promise(resolve => setImmediate(resolve));
+  elements.get('files').children[1].listeners.click();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.match(allText(elements.get('code-view')), /\+return 1/);
+  assert.deepEqual(calls, ['/api/harnesses','/api/changes','/api/evidence']);
+});
+
+test('quiz unavailability explains omission or invalid citations without exposing model content', () => {
+  const {elements,context,load} = environment(() => Promise.resolve(jsonResponse(changes)));
+  load('graph.js'); load('quiz.js'); load('app.js');
+  for (const [reason, expected] of [
+    ['model_null', /provider returned no quiz/i],
+    ['empty', /no questions/i],
+    ['invalid_structure', /invalid format/i],
+    ['invalid_reference', /cited code outside/i],
+  ]) {
+    context.result = {explanation:{quiz:null,quiz_diagnostic:reason}};
+    vm.runInContext('prepareQuiz(result)',context);
+    assert.match(elements.get('quiz-status').textContent, expected);
+    assert.equal(elements.get('quiz-start').hidden, true);
+  }
+});
+
+test('remote quiz generation requires fresh consent and retry uses the existing questions', async () => {
+  const calls = [];
+  const fetch = async (url, options) => {
+    calls.push({url, body: options?.body && JSON.parse(options.body)});
+    if (url === '/api/harnesses') return jsonResponse([]);
+    if (url === '/api/changes') return jsonResponse(changes);
+    if (url === '/api/quiz/fresh') return jsonResponse({fresh:true});
+    if (url === '/api/quiz/generate') return jsonResponse({snapshot:'a'.repeat(64),quiz:sampleQuiz});
+    throw Error(`unexpected ${url}`);
+  };
+  const {elements,context,load} = environment(fetch);
+  load('graph.js'); load('quiz.js'); load('app.js');
+  await new Promise(resolve => setImmediate(resolve));
+  context.result={snapshot:'a'.repeat(64),quiz_session:'session',quiz_local:false,quiz_provider:'https://example.com',quiz_model:'model',explanation:{},evidence:{files:[]}};
+  vm.runInContext('prepareQuiz(result)',context);
+  elements.get('quiz-generate').listeners.click();
+  assert.equal(elements.get('quiz-consent-panel').hidden,false);
+  assert.match(elements.get('quiz-privacy-info').textContent,/another request.*incur costs/);
+  await elements.get('quiz-confirm').listeners.click();
+  assert.equal(calls.filter(call=>call.url==='/api/quiz/generate').length,0);
+  elements.get('quiz-consent').checked=true;
+  await elements.get('quiz-confirm').listeners.click();
+  assert.deepEqual(calls.find(call=>call.url==='/api/quiz/generate').body,{session:'session',snapshot:'a'.repeat(64),consent:true});
+  const panel=elements.get('quiz-content');
+  panel.children.find(e=>e.className==='quiz-options').children[0].listeners.click();
+  panel.children.find(e=>e.className==='quiz-feedback').children.find(e=>e.textContent==='See score').listeners.click();
+  await panel.children.find(e=>e.textContent==='Retry same questions').listeners.click();
+  assert.equal(calls.filter(call=>call.url==='/api/quiz/generate').length,1);
+});
+
+test('refresh discards pending generated quiz and aborts its request', async () => {
+  let resolveQuiz, signal;
+  const deferred = new Promise(resolve => {resolveQuiz=resolve;});
+  const fetch = (url, options) => {
+    if (url === '/api/quiz/generate') { signal=options.signal; return deferred; }
+    if (url === '/api/harnesses') return Promise.resolve(jsonResponse([]));
+    return Promise.resolve(jsonResponse(changes));
+  };
+  const {elements,context,load}=environment(fetch);
+  load('graph.js'); load('quiz.js'); load('app.js');
+  await new Promise(resolve=>setImmediate(resolve));
+  context.result={snapshot:'a'.repeat(64),quiz_session:'session',quiz_local:true,explanation:{},evidence:{files:[]}};
+  vm.runInContext('prepareQuiz(result)',context);
+  elements.get('quiz-generate').listeners.click();
+  await elements.get('refresh').listeners.click();
+  assert.equal(signal.aborted,true);
+  resolveQuiz(jsonResponse({snapshot:'a'.repeat(64),quiz:sampleQuiz}));
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(elements.get('quiz-section').hidden,true);
+  assert.equal(elements.get('quiz-content').children.length,0);
+});
+
+test('cancel during post-generation freshness check does not display the quiz', async () => {
+  let resolveFresh, freshSignal;
+  const pendingFresh = new Promise(resolve => { resolveFresh = resolve; });
+  const fetch = (url, options) => {
+    if (url === '/api/harnesses') return Promise.resolve(jsonResponse([]));
+    if (url === '/api/changes') return Promise.resolve(jsonResponse(changes));
+    if (url === '/api/quiz/generate') return Promise.resolve(jsonResponse({snapshot:'a'.repeat(64),quiz:sampleQuiz}));
+    if (url === '/api/quiz/fresh') { freshSignal = options.signal; return pendingFresh; }
+    throw Error(`unexpected ${url}`);
+  };
+  const {elements,context,load} = environment(fetch);
+  load('graph.js'); load('quiz.js'); load('app.js');
+  await new Promise(resolve => setImmediate(resolve));
+  context.result = {snapshot:'a'.repeat(64),quiz_session:'session',quiz_local:true,explanation:{},evidence:{files:[]}};
+  vm.runInContext('prepareQuiz(result)', context);
+  const pending = vm.runInContext('generateQuiz(false)', context);
+  await new Promise(resolve => setImmediate(resolve));
+  elements.get('quiz-cancel-request').listeners.click();
+  assert.equal(freshSignal.aborted, true);
+  resolveFresh(jsonResponse({fresh:true}));
+  await pending;
+  assert.equal(elements.get('quiz-content').children.length, 0);
+  assert.match(elements.get('quiz-status').textContent, /canceled/i);
+  assert.equal(elements.get('quiz-generate').hidden, false);
 });

@@ -37,11 +37,100 @@ SCENARIOS = {
 }
 
 
+SCENARIOS.update({'react-search': {'base': {'Search.jsx': 'export function Results({ items }) {\n'
+                                         '  return items.map(item => <li key={item.id}>{item.name}</li>);\n'
+                                         '}\n'},
+                  'changed': {'Search.jsx': 'export function Results({ items, query }) {\n'
+                                            '  const term = query.trim().toLowerCase();\n'
+                                            '  const shown = items.filter(item => '
+                                            'item.name.toLowerCase().includes(term));\n'
+                                            '  return shown.map(item => <li '
+                                            'key={item.id}>{item.name}</li>);\n'
+                                            '}\n'}},
+ 'cursor-pagination': {'base': {'api.py': 'def page(rows):\n    return rows[:20]\n'},
+                       'changed': {'api.py': 'def page(rows, after, limit=20):\n'
+                                             "    matches = [row for row in rows if row['id'] > after]\n"
+                                             '    batch = matches[:limit]\n'
+                                             "    cursor = batch[-1]['id'] if len(matches) > limit else "
+                                             'None\n'
+                                             '    return batch, cursor\n'}},
+ 'zero-stock': {'base': {'stock.js': 'export function stock(inventory, sku) {\n'
+                                     '  return inventory[sku] || 5;\n'
+                                     '}\n'},
+                'changed': {'stock.js': 'export function stock(inventory, sku) {\n'
+                                        '  return inventory[sku] ?? 5;\n'
+                                        '}\n'}},
+ 'tenant-cache': {'base': {'profiles.py': 'def profile(db, tenant, user):\n'
+                                          '    return db.load_profile(tenant, user)\n'},
+                  'changed': {'profiles.py': 'cache = {}\n'
+                                             '\n'
+                                             'def profile(db, tenant, user):\n'
+                                             '    if user not in cache:\n'
+                                             '        cache[user] = db.load_profile(tenant, user)\n'
+                                             '    return cache[user]\n'}},
+ 'webhook-retry': {'base': {'delivery.py': 'def dispatch(queue, send):\n'
+                                           '    for message in queue:\n'
+                                           '        send(message)\n'},
+                   'changed': {'delivery.py': 'def dispatch(queue, send):\n'
+                                              '    failed = []\n'
+                                              '    for message in queue:\n'
+                                              '        try:\n'
+                                              '            send(message)\n'
+                                              '        except TimeoutError:\n'
+                                              '            failed.append(message)\n'
+                                              '            break\n'
+                                              '    return failed\n'}},
+ 'render-lookups': {'base': {'orders.js': 'export function labels(orders, productsById) {\n'
+                                          '  return orders.map(order => '
+                                          'productsById[order.productId].name);\n'
+                                          '}\n'},
+                    'changed': {'orders.js': 'export function labels(orders, products) {\n'
+                                             '  return orders.map(order => products.find(p => p.id === '
+                                             "order.productId)?.name ?? 'Unknown');\n"
+                                             '}\n'}},
+ 'shared-normalization': {'base': {'importer.py': 'def import_email(email):\n'
+                                                  '    return email.strip().lower()\n',
+                                   'lookup.py': 'def lookup_email(email):\n    return email.lower()\n'},
+                          'changed': {'importer.py': 'from normalize import canonical_email\n'
+                                                     '\n'
+                                                     'def import_email(email):\n'
+                                                     '    return canonical_email(email)\n',
+                                      'lookup.py': 'from normalize import canonical_email\n'
+                                                   '\n'
+                                                   'def lookup_email(email):\n'
+                                                   '    return canonical_email(email)\n',
+                                      'normalize.py': 'def canonical_email(email):\n'
+                                                      '    return email.strip().lower()\n'}}})
+
+SCENARIOS.update({
+    "react-state": {
+        "base": {"Cart.tsx": "export function add(setItems, item, items) {\n  setItems([...items, item]);\n}\n"},
+        "changed": {"Cart.tsx": "export function add(setItems, item) {\n  setItems(previous => [...previous, item]);\n}\n"},
+    },
+    "java-validation": {
+        "base": {"Order.java": "class Order {\n  int charge(int price, int quantity) { return price * quantity; }\n}\n"},
+        "changed": {"Order.java": "class Order {\n  int charge(int price, int quantity) {\n    if (quantity <= 0) throw new IllegalArgumentException();\n    return Math.multiplyExact(price, quantity);\n  }\n}\n"},
+    },
+    "sql-inventory": {
+        "base": {"reserve.sql": "UPDATE inventory SET stock = stock - 1 WHERE sku = :sku;\n"},
+        "changed": {"reserve.sql": "UPDATE inventory SET stock = stock - 1 WHERE sku = :sku AND stock > 0 RETURNING stock;\n"},
+    },
+    "async-gather": {
+        "base": {"load.py": "async def load(ids, fetch):\n    return [await fetch(i) for i in ids]\n"},
+        "changed": {"load.py": "import asyncio\n\nasync def load(ids, fetch):\n    return await asyncio.gather(*(fetch(i) for i in ids), return_exceptions=True)\n"},
+    },
+    "pure-refactor": {
+        "base": {"price.py": "def price(amount):\n    if amount < 0:\n        return 0\n    return amount * 2\n"},
+        "changed": {"price.py": "def price(amount):\n    return max(0, amount) * 2\n"},
+    },
+})
+
 def write_files(root, files):
     for name, content in files.items():
         path = root / name
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8", newline="\n")
+        with path.open("w", encoding="utf-8", newline="\n") as handle:
+            handle.write(content)
 
 
 def run_git(root, *args):

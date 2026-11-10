@@ -42,7 +42,7 @@ type Evidence struct {
 	Limitations []string       `json:"limitations"`
 }
 
-var secretPattern = regexp.MustCompile(`(?i)(-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:sk|ghp|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{12,}|\bAKIA[0-9A-Z]{16}\b|(?:password|passwd|secret|api[_-]?key|access[_-]?token|client[_-]?secret)\s*[:=]\s*["'][^"'\s]{8,})`)
+var secretPattern = regexp.MustCompile(`(?i)(-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:sk|gsk|ghp|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{12,}|\bAKIA[0-9A-Z]{16}\b|(?:password|passwd|secret|api[_-]?key|access[_-]?token|client[_-]?secret)\s*[:=]\s*["'][^"'\s]{8,})`)
 
 func secretPath(p string) bool {
 	for _, part := range strings.Split(strings.ToLower(filepath.ToSlash(p)), "/") {

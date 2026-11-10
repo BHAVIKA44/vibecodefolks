@@ -10,6 +10,9 @@ let pending = null;
 let requestController = null;
 let generation = 0;
 let snapshotEvidence = null;
+let localEvidence = null;
+let evidenceRequest = null;
+let codeSelection = 0;
 let changedFiles = [];
 let fileGroups = [];
 function clearGraph(notice = 'No current change flow. Generate an explanation to explore supported connections.') {
@@ -31,13 +34,40 @@ element('file-search').addEventListener('input', () => {
   for (const entry of changedFiles) entry.item.hidden = !entry.path.toLowerCase().includes(query);
   for (const group of fileGroups) group.heading.hidden = !changedFiles.some(entry => entry.folder === group.folder && !entry.item.hidden);
 });
-function showCode(path, ref) {
+async function showCode(path, ref) {
+  const selection = ++codeSelection;
+  const currentGeneration = generation;
   selectTab('code');
   for (const entry of changedFiles) entry.item.className = entry.path === path ? 'selected' : '';
   const panel = element('code-view'); panel.replaceChildren();
-  const file = snapshotEvidence?.files.find((entry) => entry.path === path);
   panel.append(text('div', path, 'code-path'));
-  if (!file) { panel.append(text('p', 'Diff evidence is not available for this file. It may be excluded by the evidence limits or privacy filters. Choose Explain changes to review available evidence.', 'muted')); return; }
+  if (!snapshotEvidence && !localEvidence) {
+    const status = text('p', 'Loading local diff…', 'muted');
+    panel.append(status);
+    evidenceRequest ??= fetch('/api/evidence', {cache:'no-store'}).then(async response => {
+      if (!response.ok) throw new Error('Could not load local diff evidence.');
+      return response.json();
+    });
+    try {
+      const evidence = await evidenceRequest;
+      if (generation !== currentGeneration || selection !== codeSelection) return;
+      localEvidence = evidence;
+      panel.replaceChildren(text('div', path, 'code-path'));
+    } catch (_) {
+      if (generation === currentGeneration && selection === codeSelection) {
+        evidenceRequest = null;
+        status.textContent = 'Could not load the local diff. Select the file to retry.';
+      }
+      return;
+    }
+  }
+  const evidence = snapshotEvidence || localEvidence;
+  const file = evidence.files.find(entry => entry.path === path);
+  if (!file) {
+    const skipped = evidence.skipped?.find(entry => entry.path === path);
+    panel.append(text('p', skipped ? `Diff unavailable: ${skipped.reason}.` : 'Diff unavailable. Refresh to capture the current changes.', 'muted'));
+    return;
+  }
   panel.append(text('p', `${file.type} · captured diff evidence`, 'code-meta'));
   const lines = document.createElement('div'); lines.className = 'diff-lines';
   let oldLine = 0, newLine = 0, active = false, highlighted = null;
@@ -61,14 +91,14 @@ async function refresh() {
   clearQuiz();
   if (requestController) requestController.abort();
   pending = null;
-  snapshotEvidence = null; changedFiles = []; fileGroups = [];
+  snapshotEvidence = null; localEvidence = null; evidenceRequest = null; changedFiles = []; fileGroups = [];
   selectTab('overview'); element('overview-empty').hidden = false; element('quiz-empty').hidden = false;
   element('consent-panel').hidden = true;
   element('explanation').hidden = true;
   clearGraph();
   element('cancel-request').hidden = true;
   element('explain').disabled = true;
-  element('explain-status').textContent = 'Previous explanation cleared. Refresh captures a new Git view.';
+  element('explain-status').textContent = generation === 1 ? 'Select a file to review its diff, then configure a provider to explain the changes.' : 'Changes refreshed. Previous explanation cleared.';
   const button = element('refresh');
   button.disabled = true;
   element('message').textContent = 'Analyzing changes…';
@@ -114,12 +144,56 @@ async function refresh() {
   } finally { button.disabled = false; element('explain').disabled = !loaded; }
 }
 element('refresh').addEventListener('click', refresh);
+const providers = {codex:['','','Codex'],groq:['https://api.groq.com/openai/v1/chat/completions','openai/gpt-oss-20b','Groq'],openai:['https://api.openai.com/v1/chat/completions','gpt-4.1-mini','OpenAI'],gemini:['https://generativelanguage.googleapis.com/v1beta/openai/chat/completions','gemini-3.8-flash','Gemini'],xai:['https://api.x.ai/v1/responses','grok-4.7','Grok'],ollama:['http://127.0.0.1:11434/v1/chat/completions','llama3.2','Ollama'],lmstudio:['http://127.0.0.1:1234/v1/chat/completions','local-model','LM Studio']};
+function showProviderFields() {
+  const choice = element('provider-choice').value || 'codex';
+  const [,,name] = providers[choice];
+  element('provider-model').value = providers[choice][1];
+  element('provider-model-label').hidden = false;
+  element('provider-model').placeholder = choice === 'codex' ? 'Use Codex default' : 'Enter model ID';
+  element('provider-key-label').hidden = ['codex', 'ollama', 'lmstudio'].includes(choice);
+  element('provider-key').value = '';
+  element('provider-status').textContent = `${name} settings are applied when you choose Save settings.`;
+}
+async function discoverHarnesses() {
+  const status = element('harness-status');
+  try {
+    const response = await fetch('/api/harnesses', {cache: 'no-store'});
+    if (!response.ok) throw new Error('Discovery failed');
+    const harnesses = await response.json();
+    status.textContent = harnesses.map(h => {
+      const availability = h.installed ? 'installed' : 'not installed';
+      const support = h.supported ? 'available for setup' : 'integration unavailable';
+      return `${h.name}: ${availability}, ${support}`;
+    }).join(' · ');
+  } catch (_) {
+    status.textContent = 'Could not check installed harnesses. Refresh to try again.';
+  }
+}
+element('provider-choice').addEventListener('change', showProviderFields);
+showProviderFields();
+discoverHarnesses();
 element('provider-connect').addEventListener('click', async () => {
-  const choice = element('provider-choice').value;
-  const providers = {codex:['','','Codex'],groq:['https://api.groq.com/openai/v1/chat/completions','openai/gpt-oss-20b','Groq'],openai:['https://api.openai.com/v1/chat/completions','gpt-4.1-mini','OpenAI'],gemini:['https://generativelanguage.googleapis.com/v1beta/openai/chat/completions','gemini-3.8-flash','Gemini'],xai:['https://api.x.ai/v1/responses','grok-4.7','Grok'],ollama:['http://127.0.0.1:11434/v1/chat/completions','llama3.2','Ollama'],lmstudio:['http://127.0.0.1:1234/v1/chat/completions','local-model','LM Studio']};
-  const [endpoint, model, name] = providers[choice];
-  const setup = choice === 'codex' ? {harness: 'codex'} : {endpoint, model, api_key: element('provider-key').value};
-  try { await post('/api/provider', setup); element('provider-key').value = ''; element('explain-status').textContent = choice === 'codex' ? 'Codex connected for this local session; it uses your existing Codex sign-in.' : `${name} connected for this session.`; } catch (error) { element('explain-status').textContent = error.message; }
+  const choice = element('provider-choice').value || 'codex';
+  const [endpoint,,name] = providers[choice];
+  const model = element('provider-model').value.trim();
+  const setup = choice === 'codex' ? {harness: 'codex', model} : {endpoint, model, api_key: element('provider-key').value};
+  const button = element('provider-connect');
+  const status = element('provider-status');
+  button.disabled = true;
+  element('provider-choice').disabled = true;
+  try {
+    await post('/api/provider', setup);
+    element('provider-key').value = '';
+    status.textContent = choice === 'codex'
+      ? 'Codex CLI found. Settings saved for this session. Sign-in and model access are checked when you request an explanation.'
+      : `${name} settings saved for this session. The key and model are checked when you request an explanation.`;
+  } catch (error) {
+    status.textContent = error.message;
+  } finally {
+    button.disabled = false;
+    element('provider-choice').disabled = false;
+  }
 });
 async function post(url, data, signal) {
   const response = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data), signal});
@@ -176,7 +250,7 @@ async function sendExplanation(consent) {
     const result = await post('/api/explain', {token, consent}, controller.signal);
     if (currentGeneration !== generation) return;
     showExplanation(result);
-    element('explain-status').textContent = 'Explanation ready.';
+    element('explain-status').textContent = 'Explanation ready. The provider for this request completed inference.';
   } catch (error) {
     if (currentGeneration === generation) element('explain-status').textContent = error.name === 'AbortError' ? 'Request canceled.' : error.message;
   } finally { if (currentGeneration === generation) { pending = null; requestController = null; element('cancel-request').hidden = true; element('explain').disabled = false; } }
@@ -196,7 +270,7 @@ element('explain').addEventListener('click', async () => {
     element('consent-title').textContent = pending.local ? 'Review evidence for your local provider' : 'Review before sending';
     element('consent-label').hidden = pending.local;
     element('send-evidence').textContent = pending.local ? 'Explain locally' : 'Send and explain';
-    element('privacy-info').textContent = `Provider: ${pending.endpoint} · Model: ${pending.model}. Sending will transmit the selected file paths, diff excerpts, surrounding code and line references below. ${pending.local ? 'This provider is configured on a loopback address.' : 'The provider may retain this data. Review the evidence before consenting.'}`;
+    element('privacy-info').textContent = `Provider: ${pending.endpoint} · Model: ${pending.model || 'configured in Codex CLI'}. Sending will transmit the selected file paths, diff excerpts, surrounding code and line references below. ${pending.local ? 'Evidence is passed to the selected local process or loopback service, which controls its own upstream access.' : 'The provider may retain this data. Review the evidence before consenting.'}`;
     addPreview(element('preview'), pending.evidence);
     element('skipped').textContent = pending.skipped.length ? `Skipped: ${pending.skipped.map((f) => `${f.path} (${f.reason})`).join(', ')}` : 'No files were skipped by the evidence filter.';
     element('consent-panel').hidden = false;
@@ -214,5 +288,12 @@ element('graph-fit').addEventListener('click', () => graphZoom(0));
 element('graph-minus').addEventListener('click', () => graphZoom(-0.2));
 element('graph-plus').addEventListener('click', () => graphZoom(0.2));
 
-element('quiz-start').addEventListener('click', startQuiz);
+element('quiz-start').addEventListener('click', () => startQuiz());
+element('quiz-generate').addEventListener('click', requestQuiz);
+element('quiz-confirm').addEventListener('click', () => generateQuiz(element('quiz-consent').checked));
+element('quiz-cancel-consent').addEventListener('click', () => {
+  element('quiz-consent-panel').hidden = true;
+  element('quiz-status').textContent = 'Quiz generation canceled. No evidence was sent.';
+});
+element('quiz-cancel-request').addEventListener('click', () => quizRequestController?.abort());
 refresh();

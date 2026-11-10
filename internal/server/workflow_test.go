@@ -100,7 +100,37 @@ func TestRealWorldWorkflows(t *testing.T) {
 				f := ev.Files[0]
 				line := f.Lines[0]
 				ref := map[string]any{"path": f.Path, "side": line.Side, "start": line.Number, "end": line.Number}
-				answer := map[string]any{"summary": "A sample change", "changes": []any{map[string]any{"title": "Changed file", "explanation": "The supplied line changed.", "references": []any{ref}}}, "impacts": []any{}, "relationships": []any{}, "uncertainties": []string{"Not runtime tested"}, "graph": map[string]any{"nodes": []any{map[string]any{"id": "one", "label": f.Path, "description": "Sample file", "change": "Changed", "impact": "May affect behavior", "uncertainty": "Not tested", "status": "unknown", "references": []any{ref}}}, "edges": []any{}}, "quiz": map[string]any{"questions": []any{map[string]any{"id": "q", "text": "Which file is included?", "options": []string{f.Path, "other-one", "other-two", "other-three"}, "correct_index": 0, "explanation": "This file is in the supplied evidence.", "category": "change", "references": []any{ref}}}}}
+				question, reasoning := "What does the changed configuration affect?", "The referenced line defines the changed setting."
+				options := []string{"The working directory", "The base image", "The exposed port", "The default command"}
+				correct := 0
+				switch scenario.name {
+				case "Go function":
+					question, reasoning = "What does Add(-2, 5) return?", "The implementation adds its two signed integer arguments."
+					options = []string{"7", "-7", "3", "-3"}
+					correct = 2
+				case "React TypeScript":
+					question, reasoning = "What does the component render on its first render?", "The component returns a Count button directly without a conditional."
+					options = []string{"An empty fragment", "A Count button", "A numeric count", "An input field"}
+					correct = 1
+				case "Python API":
+					question, reasoning = "What value does health() now return to its direct caller?", "The return statement constructs a dictionary, replacing the integer result."
+					options = []string{"Integer 200", "String ok", "A status and body tuple", "A dictionary with status set to ok"}
+					correct = 3
+				case "Java business logic":
+					question, reasoning = "What does total() return after the change?", "The method returns the literal 42."
+					options = []string{"0", "42", "An input-dependent value", "An exception"}
+					correct = 1
+				case "Mixed authentication":
+					question, reasoning = "What response body does the shown POST handler return when invoked?", "The handler returns the literal ok; the diff does not show authentication."
+					options = []string{"ok", "A token", "A redirect", "A user record"}
+				}
+				for _, evidenceLine := range f.Lines {
+					if evidenceLine.Side == "new" && (strings.Contains(evidenceLine.Text, "return") || strings.Contains(evidenceLine.Text, "WORKDIR") || strings.Contains(evidenceLine.Text, "<button>")) {
+						ref["side"], ref["start"], ref["end"] = evidenceLine.Side, evidenceLine.Number, evidenceLine.Number
+						break
+					}
+				}
+				answer := map[string]any{"summary": reasoning, "changes": []any{map[string]any{"title": "Changed file", "explanation": reasoning, "references": []any{ref}}}, "impacts": []any{}, "relationships": []any{}, "uncertainties": []string{"Not runtime tested"}, "graph": map[string]any{"nodes": []any{map[string]any{"id": "one", "label": f.Path, "description": "Sample file", "change": "Changed", "impact": "May affect behavior", "uncertainty": "Not tested", "status": "unknown", "references": []any{ref}}}, "edges": []any{}}, "quiz": map[string]any{"questions": []any{map[string]any{"id": "q", "text": question, "options": options, "correct_index": correct, "explanation": reasoning, "category": "change", "references": []any{ref}}}}}
 				content, _ := json.Marshal(answer)
 				_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": string(content)}}}})
 			}))
@@ -128,6 +158,11 @@ func TestRealWorldWorkflows(t *testing.T) {
 			if err := json.Unmarshal(changes.Body.Bytes(), &changeSet); err != nil || changeSet.TotalFiles != len(scenario.files) {
 				t.Fatalf("changes: %+v %v", changeSet, err)
 			}
+			localReview := request("GET", "/api/evidence", "")
+			var localEvidence analysis.Evidence
+			if localReview.Code != 200 || json.Unmarshal(localReview.Body.Bytes(), &localEvidence) != nil || len(localEvidence.Files) != len(scenario.files) || calls.Load() != 0 {
+				t.Fatalf("local review: %d %s, provider calls=%d", localReview.Code, localReview.Body.String(), calls.Load())
+			}
 			prep := request("POST", "/api/explain/prepare", "{}")
 			if prep.Code != 200 {
 				t.Fatalf("prepare %d: %s", prep.Code, prep.Body.String())
@@ -154,7 +189,9 @@ func TestRealWorldWorkflows(t *testing.T) {
 						Edges  []any  `json:"edges"`
 					} `json:"graph"`
 					Quiz struct {
-						Questions []any `json:"questions"`
+						Questions []struct {
+							CorrectIndex int `json:"correct_index"`
+						} `json:"questions"`
 					} `json:"quiz"`
 				} `json:"explanation"`
 				Snapshot string `json:"snapshot"`
@@ -164,6 +201,10 @@ func TestRealWorldWorkflows(t *testing.T) {
 			}
 			if output.Explanation.Graph.Source != "unavailable" || len(output.Explanation.Graph.Edges) != 0 || len(output.Explanation.Quiz.Questions) != 1 || output.Snapshot != prepared.Snapshot || calls.Load() != 1 {
 				t.Fatalf("bad result: %+v calls=%d", output, calls.Load())
+			}
+			knownAnswers := map[string]int{"Go function": 2, "React TypeScript": 1, "Python API": 3, "Java business logic": 1}
+			if got := output.Explanation.Quiz.Questions[0].CorrectIndex; got != knownAnswers[scenario.name] {
+				t.Fatalf("incorrect fixture answer index: %d", got)
 			}
 			fresh := request("POST", "/api/quiz/fresh", fmt.Sprintf(`{"snapshot":%q}`, output.Snapshot))
 			if fresh.Code != 200 || !strings.Contains(fresh.Body.String(), `"fresh":true`) || calls.Load() != 1 {

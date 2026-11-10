@@ -8,6 +8,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -58,9 +61,13 @@ func TestProviderSuccessAndValidation(t *testing.T) {
 		t.Fatalf("provider error: %v", err)
 	}
 	for code, want := range map[int]string{
-		http.StatusBadRequest:         "Check the endpoint, model name",
-		http.StatusServiceUnavailable: "temporarily unavailable",
-		http.StatusTooManyRequests:    "rate limit reached",
+		http.StatusBadRequest:          "Check the endpoint, model name",
+		http.StatusServiceUnavailable:  "temporarily unavailable",
+		http.StatusTooManyRequests:     "rate limit or quota",
+		http.StatusUnauthorized:        "rejected the API key",
+		http.StatusForbidden:           "denied access",
+		http.StatusNotFound:            "endpoint or model",
+		http.StatusInternalServerError: "failed internally",
 	} {
 		s4 := providerServer(t, code, "provider details must not be exposed")
 		cfg, _ = NewConfig(s4.URL, "test", "")
@@ -106,6 +113,11 @@ func TestGroqUsesStrictStructuredOutput(t *testing.T) {
 	encoded, err := json.Marshal(format)
 	if err != nil || !json.Valid(encoded) || !strings.Contains(string(encoded), `"additionalProperties":false`) {
 		t.Fatalf("invalid Groq schema: %s %v", encoded, err)
+	}
+	for _, field := range []string{`"graph":`, `"changes":`, `"references":`} {
+		if !strings.Contains(string(encoded), field) {
+			t.Errorf("strict Groq response schema omits %s", field)
+		}
 	}
 	plain := (&ChatProvider{Config: Config{Endpoint: "https://example.com/v1/chat/completions"}}).responseFormat()
 	if plain["type"] != "json_object" {
@@ -180,19 +192,64 @@ func TestRelationshipNeedsBothReferences(t *testing.T) {
 
 func TestCodexHarnessUsesLocalCLIAndValidatesResult(t *testing.T) {
 	dir := t.TempDir()
-	binary := dir + "/codex"
-	script := "#!/bin/sh\nout=''\nwhile [ $# -gt 0 ]; do\n  if [ \"$1\" = \"-o\" ]; then out=$2; shift 2; continue; fi\n  shift\ndone\ncat > \"$out\" <<'JSON'\n" + answer("main.go") + "\nJSON\n"
-	if err := os.WriteFile(binary, []byte(script), 0700); err != nil {
+	binary := filepath.Join(dir, "codex")
+	if runtime.GOOS == "windows" {
+		binary += ".exe"
+	}
+	response := strings.TrimSuffix(answer("main.go"), "}") + `,"quiz":{"questions":[{"id":"branch","text":"Which branch can reach the added line?","options":["First","Second","Third","Fourth"],"correct_index":1,"explanation":"The second branch reaches the line.","references":[{"path":"main.go","side":"new","start":2,"end":2}],"category":"change"}]}}`
+	source := fmt.Sprintf(`package main
+import ("os"; "bytes")
+func main() {
+	if os.Getenv("VIBE_TEST_FAIL") == "auth" { os.Stderr.WriteString("not logged in secret-should-not-escape"); os.Exit(1) }
+	if os.Getenv("VIBE_TEST_FAIL") == "process" { os.Stderr.WriteString("secret-should-not-escape"); os.Exit(1) }
+	var out, schema string
+	for i := 1; i+1 < len(os.Args); i++ {
+		switch os.Args[i] {
+		case "-o": out = os.Args[i+1]
+		case "--output-schema": schema = os.Args[i+1]
+		}
+	}
+	body, err := os.ReadFile(schema)
+	if err != nil || !bytes.Contains(body, []byte("summary")) { os.Exit(1) }
+ found := false
+ for i := 1; i+1 < len(os.Args); i++ { if os.Args[i] == "--model" && os.Args[i+1] == "fictional-model" { found = true } }
+ if !found { os.Exit(1) }
+	if os.WriteFile(out, []byte(%q), 0600) != nil { os.Exit(1) }
+}`, response)
+	goTool, err := exec.LookPath("go")
+	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+	sourcePath := filepath.Join(dir, "fixture.go")
+	if err := os.WriteFile(sourcePath, []byte(source), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := exec.Command(goTool, "build", "-o", binary, sourcePath).CombinedOutput(); err != nil {
+		t.Fatalf("build CLI fixture: %v: %s", err, output)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	cfg, err := NewHarnessConfig("codex")
 	if err != nil {
 		t.Fatal(err)
 	}
+	cfg.Model = "fictional-model"
 	got, err := ProviderFor(cfg).Explain(context.Background(), fixture())
-	if err != nil || got.Summary != "A change" || got.Graph == nil {
+	if err != nil || got.Summary != "A change" || got.Graph == nil || got.Quiz == nil || *got.Quiz.Questions[0].CorrectIndex != 1 {
 		t.Fatalf("harness response: %+v %v", got, err)
+	}
+	for _, tc := range []struct{ mode, expected string }{{"auth", "sign-in"}, {"process", "exited"}} {
+		t.Run(tc.mode, func(t *testing.T) {
+			t.Setenv("VIBE_TEST_FAIL", tc.mode)
+			_, err := ProviderFor(cfg).Explain(context.Background(), fixture())
+			if err == nil || !strings.Contains(err.Error(), tc.expected) || strings.Contains(err.Error(), "secret-should-not-escape") {
+				t.Fatalf("unsafe or missing diagnostic: %v", err)
+			}
+		})
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := ProviderFor(cfg).Explain(ctx, fixture()); err == nil || !strings.Contains(err.Error(), "canceled") {
+		t.Fatalf("canceled request: %v", err)
 	}
 	if _, err := NewHarnessConfig("unknown"); err == nil {
 		t.Fatal("accepted unknown harness")

@@ -16,11 +16,17 @@ func testQuiz() Quiz {
 func TestQuizValidation(t *testing.T) {
 	ev := graphFixture()
 	cases := map[string]func(*Quiz){
-		"missing questions":        func(q *Quiz) { q.Questions = nil },
-		"duplicate ids":            func(q *Quiz) { q.Questions = append(q.Questions, q.Questions[0]) },
+		"missing questions": func(q *Quiz) { q.Questions = nil },
+		"duplicate ids":     func(q *Quiz) { q.Questions = append(q.Questions, q.Questions[0]) },
+		"duplicate question wording": func(q *Quiz) {
+			duplicate := q.Questions[0]
+			duplicate.ID = "q2"
+			duplicate.Text = "  WHICH  file was added? "
+			q.Questions = append(q.Questions, duplicate)
+		},
 		"bad index":                func(q *Quiz) { v := 4; q.Questions[0].CorrectIndex = &v },
 		"missing index":            func(q *Quiz) { q.Questions[0].CorrectIndex = nil },
-		"duplicate options":        func(q *Quiz) { q.Questions[0].Options[1] = " LOGIN.TSX " },
+		"duplicate options":        func(q *Quiz) { q.Questions[0].Options[1] = " login.tsx " },
 		"few options":              func(q *Quiz) { q.Questions[0].Options = q.Questions[0].Options[:3] },
 		"fabricated file":          func(q *Quiz) { q.Questions[0].References[0].Path = "fake.go" },
 		"wrong side":               func(q *Quiz) { q.Questions[0].References[0].Side = "old" },
@@ -76,5 +82,95 @@ func TestProviderReturnsQuizWithSameRequest(t *testing.T) {
 	got, err := NewProvider(cfg).Explain(context.Background(), fixture())
 	if err != nil || got.Quiz == nil || len(got.Quiz.Questions) != 1 {
 		t.Fatalf("valid quiz: %+v %v", got.Quiz, err)
+	}
+}
+
+func TestQuizDiagnostics(t *testing.T) {
+	ev := graphFixture()
+	valid := testQuiz()
+	raw, _ := json.Marshal(valid)
+	cases := []struct {
+		name string
+		raw  json.RawMessage
+		want string
+	}{
+		{"missing", nil, "missing"},
+		{"null", json.RawMessage("null"), "model_null"},
+		{"empty", json.RawMessage(`{"questions":[]}`), "empty"},
+		{"null questions", json.RawMessage(`{"questions":null}`), "invalid_structure"},
+		{"missing questions", json.RawMessage(`{}`), "invalid_structure"},
+		{"malformed", json.RawMessage(`{"questions":"wrong"}`), "invalid_structure"},
+		{"valid", raw, "available"},
+	}
+	invalidReference := testQuiz()
+	invalidReference.Questions[0].References[0].Path = "absent"
+	bad, _ := json.Marshal(invalidReference)
+	cases = append(cases, struct {
+		name string
+		raw  json.RawMessage
+		want string
+	}{"reference", bad, "invalid_reference"})
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			quiz, status := validateQuiz(tc.raw, ev)
+			if status != tc.want || (quiz != nil) != (tc.want == "available") {
+				t.Fatalf("quiz=%v status=%q, want %q", quiz, status, tc.want)
+			}
+		})
+	}
+}
+
+func TestQuizDiagnosticPreservesExplanation(t *testing.T) {
+	for _, tc := range []struct{ suffix, want string }{
+		{"", "missing"},
+		{`,"quiz":null`, "model_null"},
+		{`,"quiz":{"questions":[]}`, "empty"},
+		{`,"quiz":{"questions":"bad"}`, "invalid_structure"},
+	} {
+		content := strings.TrimSuffix(answer("main.go"), "}") + tc.suffix + "}"
+		result, err := decodeExplanation(content, fixture())
+		if err != nil || result.Summary != "A change" || result.Quiz != nil || result.QuizDiagnostic != tc.want {
+			t.Fatalf("result=%+v error=%v", result, err)
+		}
+	}
+}
+
+func TestDedicatedQuizValidation(t *testing.T) {
+	q := testQuiz()
+	q.Questions[0].OptionExplanations = []string{"First is wrong", "Second follows", "Third is wrong", "Fourth is wrong"}
+	raw, _ := json.Marshal(q)
+	if quiz, diagnostic, err := decodeDedicatedQuiz(string(raw), graphFixture()); err != nil || diagnostic != "available" || quiz == nil {
+		t.Fatalf("valid response: quiz=%v diagnostic=%q err=%v", quiz, diagnostic, err)
+	}
+	q.Questions[0].OptionExplanations = []string{"only one"}
+	raw, _ = json.Marshal(q)
+	if quiz, diagnostic, err := decodeDedicatedQuiz(string(raw), graphFixture()); err != nil || diagnostic != "invalid_structure" || quiz != nil {
+		t.Fatalf("invalid feedback: quiz=%v diagnostic=%q err=%v", quiz, diagnostic, err)
+	}
+	q.Questions[0].OptionExplanations = []string{"first", "second", "third", "fourth"}
+	q.Questions[0].References[0].Path = "missing.go"
+	raw, _ = json.Marshal(q)
+	if quiz, diagnostic, err := decodeDedicatedQuiz(string(raw), graphFixture()); err != nil || diagnostic != "invalid_reference" || quiz != nil {
+		t.Fatalf("invalid citation: quiz=%v diagnostic=%q err=%v", quiz, diagnostic, err)
+	}
+	for _, raw := range []string{`{"questions":[]}`, `{"questions":null}`, `not-json`} {
+		if quiz, diagnostic, err := decodeDedicatedQuiz(raw, graphFixture()); err != nil || diagnostic == "available" || quiz != nil {
+			t.Fatalf("unavailable response: quiz=%v diagnostic=%q err=%v", quiz, diagnostic, err)
+		}
+	}
+}
+
+func TestDedicatedQuizDistinctFeedbackAndCaseSensitiveOutcomes(t *testing.T) {
+	q := testQuiz()
+	q.Questions[0].Options = []string{"returns \"OK\"", "returns \"ok\"", "returns an error", "returns nothing"}
+	q.Questions[0].OptionExplanations = []string{"Upper case result", "Lower case result", "Error path", "No result"}
+	raw, _ := json.Marshal(q)
+	if quiz, diagnostic, _ := decodeDedicatedQuiz(string(raw), graphFixture()); quiz == nil || diagnostic != "available" {
+		t.Fatalf("case-sensitive outcomes rejected: %s", diagnostic)
+	}
+	q.Questions[0].OptionExplanations[2] = " Lower case result "
+	raw, _ = json.Marshal(q)
+	if quiz, diagnostic, _ := decodeDedicatedQuiz(string(raw), graphFixture()); quiz != nil || diagnostic != "invalid_structure" {
+		t.Fatalf("duplicate feedback accepted: %s", diagnostic)
 	}
 }

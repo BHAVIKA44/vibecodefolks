@@ -67,7 +67,7 @@ The path can point anywhere inside a Git repository; omit it for the current dir
 ## Features
 
 - Inspect working-tree Git changes or, when clean, the last commit.
-- Review bounded code evidence before sending it to a local harness or configured provider.
+- Open a changed file to inspect bounded diff evidence before configuring any provider. Review the explanation snapshot separately before sending it.
 - Work through an overview, cited code changes, an optional inferred flow, and an understanding quiz.
 - Run locally without a database, cloud service, or frontend runtime dependency.
 
@@ -77,9 +77,9 @@ The dashboard shows the combined working-tree diff from `HEAD`, plus untracked n
 
 ## Optional AI explanation
 
-The dashboard's **Codex (local)** option follows the local-harness model: it uses an already installed and authenticated Codex CLI, so VibeCodeFolks does not receive or save an API key. It sends only the reviewed evidence and starts Codex in a temporary, read-only directory. The Codex CLI remains responsible for its account, selected model, and provider access. If the CLI is unavailable or cannot run noninteractively, VibeCodeFolks reports that failure and does not display an explanation.
+The dashboard's **Codex (local)** option follows the local-harness model: it uses an already installed and authenticated Codex CLI, so VibeCodeFolks does not receive or save an API key. It sends only the reviewed evidence and starts Codex in a temporary, read-only directory. The Codex CLI remains responsible for its account, selected model, and provider access. Evidence can reach the service configured in that CLI. If the CLI is unavailable or cannot run noninteractively, VibeCodeFolks reports that failure and does not display an explanation.
 
-Direct HTTP providers remain available when you prefer them. Configure them in the dashboard for the current session, or set these environment variables before starting the CLI:
+See [provider compatibility](docs/provider-compatibility.md) for harness discovery and current integration limits. Direct HTTP providers remain available. Choose a provider, enter its model ID and any required key, then select **Save settings**. Saving only checks local configuration and, for Codex, whether the CLI is on PATH. The first explanation request checks credentials and model access. You can also set these environment variables before starting the CLI:
 
 ```sh
 export VIBECODEFOLKS_AI_ENDPOINT="https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
@@ -87,6 +87,8 @@ export VIBECODEFOLKS_AI_MODEL="your-available-gemini-model"
 # Set VIBECODEFOLKS_AI_API_KEY securely in your shell, without sharing it.
 vibecodefolks /path/to/project
 ```
+
+If your shell already has `GROQ_API_KEY`, run the CLI without the custom provider variables to select Groq GPT-OSS 20B. Evidence preview and explicit consent still apply.
 
 Use the provider's full chat-completions URL. Remote endpoints require HTTPS and an API key; loopback endpoints can use HTTP and do not require a key. Providers must support OpenAI-compatible chat completions and structured JSON responses. Groq uses its strict JSON Schema mode; other compatible providers use JSON-object mode. No AI request is made when the dashboard opens. Click **Explain Changes**, review the evidence and provider details, then explicitly send it. Remote providers require the consent checkbox. Canceling a provider request cancels the HTTP call where possible.
 
@@ -104,9 +106,9 @@ The snapshot timestamp and identifier describe the evidence sent to the provider
 
 ### Understanding quiz
 
-After an explanation is generated, choose **Okay bro, did you actually understand it? 💀** to practice with up to five multiple-choice questions about the supplied code evidence. The same AI request produces the explanation, diagram, and optional quiz; starting or retrying a quiz does not send code to the AI provider again. If the evidence or model response cannot support a quiz, the dashboard says so and the explanation remains available.
+After reviewing the explanation, choose **Test my understanding** to request a quiz about the captured evidence. Quiz generation makes a separate request using the same provider and model. Remote requests require fresh consent, and may incur costs. If the evidence or model response cannot support a quiz, the dashboard says so and the explanation remains available. Retry uses the same questions without another provider request. Quiz sessions expire after 30 minutes; explain the changes again to create a new session.
 
-Each answer receives immediate feedback, an AI-generated explanation, and expandable source references. The final score is the number of correct choices out of the questions presented. Answers and scores remain in the current browser session. Retry starts a new attempt with the same questions. The app checks the local evidence snapshot before starting or retrying; refresh clears the current quiz and score.
+Open the cited source while answering. After each answer, read the feedback and reasoning. The results let you revisit individual questions, your choices, and the cited code. The final score is the number of correct choices out of the questions presented. Answers and scores remain in the current browser session. Retry starts a new attempt with the same questions. The app checks the local evidence snapshot before starting or retrying; refresh clears the current quiz and score.
 
 ![Understanding quiz with feedback from a scripted mock provider](docs/understanding-quiz.png)
 
