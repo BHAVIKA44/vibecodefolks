@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -234,6 +235,58 @@ func TestHarnessDiscoveryReportsAvailabilityWithoutClaimingSupport(t *testing.T)
 		if entry.Name == "codex" && (entry.Installed || !entry.Supported) {
 			t.Fatalf("bad Codex status: %+v", entry)
 		}
+	}
+}
+
+func TestMultiHarnessAPIEndpoints(t *testing.T) {
+	emptyDir := t.TempDir()
+	t.Setenv("PATH", emptyDir) // ensure none are installed
+	handler := Handler(emptyDir, fstest.MapFS{}, "example.test")
+
+	for _, h := range []string{"codex", "claude", "gemini"} {
+		// Discover models when not installed
+		body := strings.NewReader(fmt.Sprintf(`{"harness":%q}`, h))
+		r := httptest.NewRequest("POST", "http://example.test/api/provider/models", body)
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("Origin", "http://example.test")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "not installed") {
+			t.Fatalf("expected not installed for %s, got %d %s", h, w.Code, w.Body.String())
+		}
+
+		// Configure provider when not installed
+		body = strings.NewReader(fmt.Sprintf(`{"harness":%q,"model":""}`, h))
+		r = httptest.NewRequest("POST", "http://example.test/api/provider", body)
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("Origin", "http://example.test")
+		w = httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "not installed") {
+			t.Fatalf("expected not installed for %s setup, got %d %s", h, w.Code, w.Body.String())
+		}
+
+		// Configure with flag injection attempt
+		body = strings.NewReader(fmt.Sprintf(`{"harness":%q,"model":"--dangerously-bypass-permissions"}`, h))
+		r = httptest.NewRequest("POST", "http://example.test/api/provider", body)
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("Origin", "http://example.test")
+		w = httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "Invalid") {
+			t.Fatalf("expected flag model rejection for %s, got %d %s", h, w.Code, w.Body.String())
+		}
+	}
+
+	// Unknown harness
+	body := strings.NewReader(`{"harness":"unknown"}`)
+	r := httptest.NewRequest("POST", "http://example.test/api/provider", body)
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Origin", "http://example.test")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "unsupported") {
+		t.Fatalf("expected unsupported for unknown harness, got %d %s", w.Code, w.Body.String())
 	}
 }
 

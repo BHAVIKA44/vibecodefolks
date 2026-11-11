@@ -63,7 +63,7 @@ func CapabilitiesFor(cfg Config) ModelCapabilities {
 	if cfg.Harness != "" {
 		return ModelCapabilities{
 			Provider:           provider,
-			Transport:          "codex_cli",
+			Transport:          provider + "_cli",
 			StructuredMode:     "strict_json_schema",
 			EvidenceByteBudget: 512 * 1024,
 		}

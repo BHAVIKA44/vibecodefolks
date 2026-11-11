@@ -219,6 +219,20 @@ func TestCodexHarnessUsesLocalCLIAndValidatesResult(t *testing.T) {
 	source := fmt.Sprintf(`package main
 import ("os"; "bytes")
 func main() {
+	for _, a := range os.Args {
+		if a == "--help" {
+			os.Stdout.WriteString("--sandbox --output-schema --output-last-message --ephemeral --skip-git-repo-check --model\n")
+			return
+		}
+		if a == "--version" {
+			os.Stdout.WriteString("codex-cli 0.166.0\n")
+			return
+		}
+	}
+	if len(os.Args) > 2 && os.Args[1] == "login" && os.Args[2] == "status" {
+		os.Stdout.WriteString("Logged in using ChatGPT\n")
+		return
+	}
 	if os.Getenv("VIBE_TEST_FAIL") == "auth" { os.Stderr.WriteString("not logged in secret-should-not-escape"); os.Exit(1) }
 	if os.Getenv("VIBE_TEST_FAIL") == "quota" { os.Stderr.Write(bytes.Repeat([]byte("echoed-prompt\n"), 2000)); os.Stderr.WriteString("ERROR: You’ve hit your usage limit. secret-should-not-escape"); os.Exit(1) }
 	if os.Getenv("VIBE_TEST_FAIL") == "model" { os.Stderr.WriteString("ERROR: The model is not supported secret-should-not-escape"); os.Exit(1) }
@@ -226,7 +240,7 @@ func main() {
 	var out, schema string
 	for i := 1; i+1 < len(os.Args); i++ {
 		switch os.Args[i] {
-		case "-o": out = os.Args[i+1]
+		case "-o", "--output-last-message": out = os.Args[i+1]
 		case "--output-schema": schema = os.Args[i+1]
 		}
 	}

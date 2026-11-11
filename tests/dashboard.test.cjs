@@ -458,3 +458,69 @@ test('lazy model discovery populates available models and preserves provider ses
   assert.equal(elements.get('provider-model').value, 'qwen/qwen3.8-27b');
   assert.equal(elements.get('provider-model-select-label').hidden, false);
 });
+
+test('coding agent selection supports Codex, Claude Code, and Gemini CLI without API keys', async () => {
+  const calls = [];
+  const fetch = async (url, options) => {
+    calls.push({url, body: options?.body && JSON.parse(options.body)});
+    if (url === '/api/harnesses') {
+      return jsonResponse([
+        {name:'codex',display:'Codex CLI',installed:true,supported:true,version:'0.166.0',auth:'signed_in'},
+        {name:'claude',display:'Claude Code',installed:false,supported:true},
+        {name:'gemini',display:'Gemini CLI',installed:false,supported:true},
+      ]);
+    }
+    if (url === '/api/changes') return jsonResponse(changes);
+    if (url === '/api/provider/models') {
+      const parsed = JSON.parse(options.body);
+      const display = parsed.harness === 'codex' ? 'Codex CLI' : (parsed.harness === 'claude' ? 'Claude Code' : 'Gemini CLI');
+      return jsonResponse({
+        provider: parsed.harness,
+        verified: parsed.harness === 'codex',
+        models: [],
+        message: `${display} found on PATH.`,
+      });
+    }
+    if (url === '/api/provider') {
+      const parsed = JSON.parse(options.body);
+      return jsonResponse({
+        configured: true,
+        verified: parsed.harness === 'codex',
+        key_saved: false,
+        provider: parsed.harness,
+        model: parsed.model,
+      });
+    }
+    throw new Error(`unexpected ${url}`);
+  };
+
+  const {elements,load}=environment(fetch); load('graph.js'); load('quiz.js'); load('app.js');
+  await new Promise(resolve=>setImmediate(resolve));
+
+  // Check initial harness status text
+  assert.match(elements.get('harness-status').textContent, /Codex CLI: installed, signed in, available for setup/);
+  assert.match(elements.get('harness-status').textContent, /Claude Code: not installed, available for setup/);
+
+  // Codex CLI is default
+  assert.equal(elements.get('provider-key-label').hidden, true);
+  assert.match(elements.get('provider-model').placeholder, /Use Codex CLI default/);
+  assert.equal(elements.get('provider-discover').textContent, 'Check CLI');
+
+  await elements.get('provider-discover').listeners.click();
+  assert.match(elements.get('provider-status').textContent, /Codex CLI found on PATH/);
+
+  await elements.get('provider-connect').listeners.click();
+  assert.match(elements.get('provider-badge').textContent, /Codex CLI · default \(verified\)/);
+
+  // Switch to Claude Code
+  elements.get('provider-choice').value = 'claude';
+  elements.get('provider-choice').listeners.change();
+  assert.equal(elements.get('provider-key-label').hidden, true);
+  assert.match(elements.get('provider-model').placeholder, /Use Claude Code default/);
+
+  // Switch to Gemini CLI
+  elements.get('provider-choice').value = 'gemini-cli';
+  elements.get('provider-choice').listeners.change();
+  assert.equal(elements.get('provider-key-label').hidden, true);
+  assert.match(elements.get('provider-model').placeholder, /Use Gemini CLI default/);
+});

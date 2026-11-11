@@ -39,6 +39,7 @@ type Explanation struct {
 	Graph          *Graph    `json:"graph,omitempty"`
 	Quiz           *Quiz     `json:"quiz,omitempty"`
 	QuizDiagnostic string    `json:"quiz_diagnostic,omitempty"`
+	ModelUsed      string    `json:"model_used,omitempty"`
 }
 type Provider interface {
 	Explain(context.Context, analysis.Evidence) (Explanation, error)
@@ -85,17 +86,20 @@ func NewConfig(endpoint, model, key string) (Config, error) {
 	return Config{Endpoint: endpoint, Model: model, APIKey: key, Local: local}, nil
 }
 func (c Config) PublicEndpoint() string {
-	if c.Harness == "codex" {
-		return "Codex local harness"
+	if c.Harness != "" {
+		return HarnessDisplayName(c.Harness) + " local harness"
 	}
 	return c.Endpoint
 }
 
 func NewHarnessConfig(name string) (Config, error) {
-	if name != "codex" {
+	name = strings.ToLower(strings.TrimSpace(name))
+	switch name {
+	case "codex", "claude", "gemini":
+		return Config{Harness: name, Local: true}, nil
+	default:
 		return Config{}, errors.New("unsupported local harness")
 	}
-	return Config{Harness: name, Local: true}, nil
 }
 
 type ChatProvider struct {

@@ -62,9 +62,13 @@ This report documents the live end-to-end browser evaluations conducted on VibeC
    - Exhibited unstable JSON schema output on Groq (intermittently omitting the required `graph` key or producing malformed JSON strings).
    - Properly caught by VibeCodeFolks' validation layer with clear user guidance advising users to switch models.
 
-4. **`Codex CLI` (`codex-cli 0.166.0`)**:
-   - Successfully discovered on local PATH.
-   - Tested CLI execution with output schema and classified rate/usage limit errors into friendly UI messages.
+4. **`Codex CLI` (`v0.166.0`, model `gpt-6.1-sol`)**:
+   - Successfully discovered on local PATH and authenticated with ChatGPT login.
+   - Live verified in real Google Chrome on `oss-collab-web`:
+     - 29.4s explanation response time, 20 valid citations, 9 structured findings.
+     - Identified critical concurrency and API contract bugs: `serverRevision` vs `revision` mismatch in conflict handling, in-place sorting mutation of caller arrays, and boundary filtering exclusion.
+     - 18.5s dedicated comprehension quiz: 2 multi-choice questions with full distractor misconception explanations. Verified wrong-answer interactive feedback and 0-request retry.
+
 
 ---
 
@@ -75,3 +79,4 @@ This report documents the live end-to-end browser evaluations conducted on VibeC
 3. **Lazy Model Discovery**: Added non-billable `GET /models` endpoint querying with chat model filtering and non-chat model rejection.
 4. **Session Key Persistence**: Retained API keys and verification state across model and provider changes within the dashboard session.
 5. **Precise Error Classification**: Separated daily token quota exhaustion (`tpd`) from rolling rate limits (`tpm`/`otpm`) and HTTP 413 request size errors.
+

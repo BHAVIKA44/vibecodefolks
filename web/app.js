@@ -183,21 +183,34 @@ async function refresh() {
   } finally { button.disabled = false; element('explain').disabled = !loaded; }
 }
 element('refresh').addEventListener('click', refresh);
-const providers = {codex:['','','Codex'],groq:['https://api.groq.com/openai/v1/chat/completions','openai/gpt-oss-120b','Groq'],openai:['https://api.openai.com/v1/chat/completions','gpt-4.1-mini','OpenAI'],gemini:['https://generativelanguage.googleapis.com/v1beta/openai/chat/completions','gemini-2.5-flash','Gemini'],xai:['https://api.x.ai/v1/responses','grok-3-mini','Grok'],ollama:['http://127.0.0.1:11434/v1/chat/completions','qwen2.5-coder:7b','Ollama'],lmstudio:['http://127.0.0.1:1234/v1/chat/completions','local-model','LM Studio']};
+const HARNESS_KEYS = {codex: 'codex', claude: 'claude', 'gemini-cli': 'gemini'};
+const providers = {
+  codex: ['', '', 'Codex CLI'],
+  claude: ['', '', 'Claude Code'],
+  'gemini-cli': ['', '', 'Gemini CLI'],
+  groq: ['https://api.groq.com/openai/v1/chat/completions', 'openai/gpt-oss-120b', 'Groq'],
+  openai: ['https://api.openai.com/v1/chat/completions', 'gpt-4.1-mini', 'OpenAI'],
+  gemini: ['https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', 'gemini-2.5-flash', 'Gemini'],
+  xai: ['https://api.x.ai/v1/responses', 'grok-3-mini', 'Grok'],
+  ollama: ['http://127.0.0.1:11434/v1/chat/completions', 'qwen2.5-coder:7b', 'Ollama'],
+  lmstudio: ['http://127.0.0.1:1234/v1/chat/completions', 'local-model', 'LM Studio']
+};
 const providerMemory = {};
 let activeProviderChoice = null;
 function getProviderMemory(choice) {
   if (!providerMemory[choice]) {
-    providerMemory[choice] = {model: providers[choice][1], models: [], configured: false, verified: false, keySaved: false};
+    const defaultModel = providers[choice] ? providers[choice][1] : '';
+    providerMemory[choice] = {model: defaultModel, models: [], configured: false, verified: false, keySaved: false};
   }
   return providerMemory[choice];
 }
 function updateProviderBadge() {
   const badge = element('provider-badge');
-  if (!activeProviderChoice) { badge.hidden = true; return; }
+  if (!activeProviderChoice || !providers[activeProviderChoice]) { badge.hidden = true; return; }
   const [,,name] = providers[activeProviderChoice];
   const mem = getProviderMemory(activeProviderChoice);
-  const modelLabel = mem.model || (activeProviderChoice === 'codex' ? 'default' : '');
+  const isHarness = Boolean(HARNESS_KEYS[activeProviderChoice]);
+  const modelLabel = mem.model || (isHarness ? 'default' : '');
   const stateLabel = mem.verified ? 'verified' : 'configured, unverified';
   badge.textContent = `${name}${modelLabel ? ` · ${modelLabel}` : ''} (${stateLabel})`;
   badge.hidden = false;
@@ -226,22 +239,26 @@ function syncModelSelect(choice) {
 }
 function showProviderFields() {
   const choice = element('provider-choice').value || 'codex';
+  if (!providers[choice]) return;
   const [,,name] = providers[choice];
   const mem = getProviderMemory(choice);
+  const isHarness = Boolean(HARNESS_KEYS[choice]);
   element('provider-model').value = mem.model;
   element('provider-model-label').hidden = false;
-  element('provider-model').placeholder = choice === 'codex' ? 'Use Codex default' : 'Enter model ID';
-  const needsKey = !['codex', 'ollama', 'lmstudio'].includes(choice);
+  element('provider-model').placeholder = isHarness ? `Use ${name} default (or custom ID)` : 'Enter model ID';
+  const needsKey = !isHarness && !['ollama', 'lmstudio'].includes(choice);
   element('provider-key-label').hidden = !needsKey;
   element('provider-key').value = '';
   element('provider-key').placeholder = needsKey && mem.keySaved ? 'Saved for session (leave blank to keep)' : '';
-  element('provider-discover').textContent = choice === 'codex' ? 'Check CLI' : 'Load models';
+  element('provider-discover').textContent = isHarness ? 'Check CLI' : 'Load models';
   syncModelSelect(choice);
   if (mem.configured) {
     const stateText = mem.verified ? 'verified' : 'configured (unverified until you load models or request an explanation)';
     element('provider-status').textContent = `${name} (${mem.model || 'default'}) is ${stateText}.`;
   } else {
-    element('provider-status').textContent = `${name} settings are applied when you choose Save settings.`;
+    element('provider-status').textContent = isHarness
+      ? `${name} uses your existing CLI login. Select Save settings to use this agent.`
+      : `${name} settings are applied when you choose Save settings.`;
   }
 }
 async function discoverHarnesses() {
@@ -251,9 +268,13 @@ async function discoverHarnesses() {
     if (!response.ok) throw new Error('Discovery failed');
     const harnesses = await response.json();
     status.textContent = harnesses.map(h => {
+      const displayName = h.display || h.name;
       const availability = h.installed ? 'installed' : 'not installed';
+      let authInfo = '';
+      if (h.auth === 'signed_in') authInfo = ', signed in';
+      else if (h.auth === 'signed_out') authInfo = ', not signed in';
       const support = h.supported ? 'available for setup' : 'integration unavailable';
-      return `${h.name}: ${availability}, ${support}`;
+      return `${displayName}: ${availability}${authInfo}, ${support}`;
     }).join(' · ');
   } catch (_) {
     status.textContent = 'Could not check installed harnesses. Refresh to try again.';
@@ -281,25 +302,31 @@ showProviderFields();
 discoverHarnesses();
 element('provider-discover').addEventListener('click', async () => {
   const choice = element('provider-choice').value || 'codex';
+  if (!providers[choice]) return;
   const [endpoint,,name] = providers[choice];
   const mem = getProviderMemory(choice);
+  const isHarness = Boolean(HARNESS_KEYS[choice]);
   const discoverBtn = element('provider-discover');
   const connectBtn = element('provider-connect');
   const status = element('provider-status');
   discoverBtn.disabled = true;
   connectBtn.disabled = true;
   element('provider-choice').disabled = true;
-  status.textContent = choice === 'codex' ? 'Checking Codex CLI on PATH…' : `Querying available models from ${name}…`;
+  status.textContent = isHarness ? `Checking ${name} on PATH…` : `Querying available models from ${name}…`;
   try {
-    const payload = choice === 'codex' ? {harness: 'codex'} : {endpoint, api_key: element('provider-key').value};
+    const payload = isHarness ? {harness: HARNESS_KEYS[choice]} : {endpoint, api_key: element('provider-key').value};
     const res = await post('/api/provider/models', payload);
     element('provider-key').value = '';
     if (res.key_saved) {
       mem.keySaved = true;
       element('provider-key').placeholder = 'Saved for session (leave blank to keep)';
     }
-    if (choice === 'codex') {
-      status.textContent = res.message || 'Codex CLI found on PATH.';
+    if (isHarness) {
+      status.textContent = res.message || `${name} found on PATH.`;
+      if (res.verified) {
+        mem.verified = true;
+        if (activeProviderChoice === choice) updateProviderBadge();
+      }
       return;
     }
     const models = Array.isArray(res.models) ? res.models : [];
@@ -324,10 +351,12 @@ element('provider-discover').addEventListener('click', async () => {
 });
 element('provider-connect').addEventListener('click', async () => {
   const choice = element('provider-choice').value || 'codex';
+  if (!providers[choice]) return;
   const [endpoint,,name] = providers[choice];
   const mem = getProviderMemory(choice);
+  const isHarness = Boolean(HARNESS_KEYS[choice]);
   const model = element('provider-model').value.trim();
-  const setup = choice === 'codex' ? {harness: 'codex', model} : {endpoint, model, api_key: element('provider-key').value};
+  const setup = isHarness ? {harness: HARNESS_KEYS[choice], model} : {endpoint, model, api_key: element('provider-key').value};
   const button = element('provider-connect');
   const status = element('provider-status');
   button.disabled = true;
@@ -340,13 +369,15 @@ element('provider-connect').addEventListener('click', async () => {
     mem.keySaved = Boolean(res.key_saved) || mem.keySaved;
     const modelInDiscovered = mem.models.length > 0 && mem.models.includes(model);
     mem.verified = Boolean(res.verified) && (!mem.models.length || modelInDiscovered);
-    if (!['codex', 'ollama', 'lmstudio'].includes(choice) && mem.keySaved) {
+    if (!isHarness && !['ollama', 'lmstudio'].includes(choice) && mem.keySaved) {
       element('provider-key').placeholder = 'Saved for session (leave blank to keep)';
     }
     activeProviderChoice = choice;
     updateProviderBadge();
-    if (choice === 'codex') {
-      status.textContent = 'Codex CLI found. Settings saved for this session (unverified until you request an explanation).';
+    if (isHarness) {
+      status.textContent = mem.verified
+        ? `${name} found and signed in. Settings saved for this session.`
+        : `${name} found. Settings saved for this session (unverified until you request an explanation).`;
     } else if (mem.verified) {
       status.textContent = `${name} (${model}) settings saved for this session and verified against available models.`;
     } else {
@@ -444,7 +475,7 @@ element('explain').addEventListener('click', async () => {
     element('consent-title').textContent = pending.local ? 'Review evidence for your local provider' : 'Review before sending';
     element('consent-label').hidden = pending.local;
     element('send-evidence').textContent = pending.local ? 'Explain locally' : 'Send and explain';
-    element('privacy-info').textContent = `Provider: ${pending.endpoint} · Model: ${pending.model || 'configured in Codex CLI'}. Sending will transmit the selected file paths, diff excerpts, surrounding code and line references below. ${pending.local ? 'Evidence is passed to the selected local process or loopback service, which controls its own upstream access.' : 'The provider may retain this data. Review the evidence before consenting.'}`;
+    element('privacy-info').textContent = `Provider: ${pending.endpoint} · Model: ${pending.model || 'CLI default'}. Sending will transmit the selected file paths, diff excerpts, surrounding code and line references below. ${pending.local ? 'Evidence is passed to the selected local process or CLI. Note that local coding CLIs (such as Codex, Claude Code, or Gemini CLI) may transmit code to their remote AI services under your existing account. Review the evidence before proceeding.' : 'The provider may retain this data. Review the evidence before consenting.'}`;
     addPreview(element('preview'), pending.evidence);
     element('skipped').textContent = pending.skipped.length ? `Skipped: ${pending.skipped.map((f) => `${f.path} (${f.reason})`).join(', ')}` : 'No files were skipped by the evidence filter.';
     element('consent-panel').hidden = false;

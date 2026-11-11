@@ -6,7 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"net/http"
@@ -92,8 +92,12 @@ func Handler(dir string, assets fs.FS, host string) http.Handler {
 		}
 		type harnessStatus struct {
 			Name      string `json:"name"`
+			Display   string `json:"display,omitempty"`
 			Installed bool   `json:"installed"`
 			Supported bool   `json:"supported"`
+			Version   string `json:"version,omitempty"`
+			Auth      string `json:"auth,omitempty"`
+			Reason    string `json:"reason,omitempty"`
 		}
 		candidates := []struct {
 			name     string
@@ -106,14 +110,34 @@ func Handler(dir string, assets fs.FS, host string) http.Handler {
 		}
 		result := make([]harnessStatus, 0, len(candidates))
 		for _, candidate := range candidates {
-			installed := false
-			for _, command := range candidate.commands {
-				if _, err := exec.LookPath(command); err == nil {
-					installed = true
-					break
+			switch candidate.name {
+			case "codex", "claude", "gemini":
+				probe := explain.ProbeHarness(r.Context(), candidate.name)
+				result = append(result, harnessStatus{
+					Name:      candidate.name,
+					Display:   probe.Display,
+					Installed: probe.Installed,
+					Supported: probe.Supported,
+					Version:   probe.Version,
+					Auth:      probe.Auth,
+					Reason:    probe.Reason,
+				})
+			default:
+				installed := false
+				for _, command := range candidate.commands {
+					if _, err := exec.LookPath(command); err == nil {
+						installed = true
+						break
+					}
 				}
+				result = append(result, harnessStatus{
+					Name:      candidate.name,
+					Display:   candidate.name,
+					Installed: installed,
+					Supported: false,
+					Reason:    "Integration planned for future release",
+				})
 			}
-			result = append(result, harnessStatus{Name: candidate.name, Installed: installed, Supported: candidate.name == "codex"})
 		}
 		writeJSON(w, result)
 	})
@@ -131,21 +155,35 @@ func Handler(dir string, assets fs.FS, host string) http.Handler {
 			return
 		}
 		if in.Harness != "" {
-			if in.Harness != "codex" {
+			h := strings.ToLower(strings.TrimSpace(in.Harness))
+			switch h {
+			case "codex", "claude", "gemini":
+				probe := explain.ProbeHarness(r.Context(), h)
+				if !probe.Installed {
+					writeError(w, http.StatusBadRequest, fmt.Sprintf("%s is not installed or is missing from the server PATH. %s", probe.Display, probe.InstallHint))
+					return
+				}
+				if !probe.Supported {
+					writeError(w, http.StatusBadRequest, probe.Reason)
+					return
+				}
+				msg := fmt.Sprintf("%s found on PATH. Leave model blank to use your %s default, or enter a custom model ID.", probe.Display, probe.Display)
+				if probe.Auth == "signed_out" {
+					msg = fmt.Sprintf("%s found on PATH, but reports not logged in. %s", probe.Display, probe.SignInHint)
+				} else if probe.Auth == "signed_in" {
+					msg = fmt.Sprintf("%s found on PATH and signed in. Leave model blank to use your %s default, or enter a custom model ID.", probe.Display, probe.Display)
+				}
+				writeJSON(w, map[string]any{
+					"provider": h,
+					"verified": probe.Auth == "signed_in",
+					"models":   []string{},
+					"message":  msg,
+				})
+				return
+			default:
 				writeError(w, http.StatusBadRequest, "unsupported local harness")
 				return
 			}
-			if _, lookupErr := exec.LookPath("codex"); lookupErr != nil {
-				writeError(w, http.StatusBadRequest, "Codex CLI is not installed or is missing from the server PATH")
-				return
-			}
-			writeJSON(w, map[string]any{
-				"provider": "codex",
-				"verified": false,
-				"models":   []string{},
-				"message":  "Codex CLI found on PATH. Leave model blank to use your Codex default, or enter a custom model ID.",
-			})
-			return
 		}
 		s.mu.Lock()
 		key := s.resolveKeyLocked(in.Endpoint, in.APIKey)
@@ -195,17 +233,26 @@ func Handler(dir string, assets fs.FS, host string) http.Handler {
 		s.mu.Unlock()
 		cfg, err := explain.NewConfig(in.Endpoint, in.Model, key)
 		if in.Harness != "" {
-			cfg, err = explain.NewHarnessConfig(in.Harness)
+			h := strings.ToLower(strings.TrimSpace(in.Harness))
+			cfg, err = explain.NewHarnessConfig(h)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "unsupported local harness")
+				return
+			}
 			model := strings.TrimSpace(in.Model)
-			if err == nil && (len(model) > 200 || strings.HasPrefix(model, "-") || strings.ContainsAny(in.Model, "\r\n")) {
-				err = errors.New("Invalid Codex model name")
+			if len(model) > 200 || strings.HasPrefix(model, "-") || strings.ContainsAny(in.Model, "\r\n") {
+				writeError(w, http.StatusBadRequest, fmt.Sprintf("Invalid %s model name", explain.HarnessDisplayName(h)))
+				return
 			}
 			cfg.Model = model
-			if err == nil {
-				if _, lookupErr := exec.LookPath("codex"); lookupErr != nil {
-					writeError(w, http.StatusBadRequest, "Codex CLI is not installed or is missing from the server PATH")
-					return
-				}
+			probe := explain.ProbeHarness(r.Context(), h)
+			if !probe.Installed {
+				writeError(w, http.StatusBadRequest, fmt.Sprintf("%s is not installed or is missing from the server PATH", probe.Display))
+				return
+			}
+			if !probe.Supported {
+				writeError(w, http.StatusBadRequest, probe.Reason)
+				return
 			}
 		}
 		if err == nil {
@@ -227,6 +274,13 @@ func Handler(dir string, assets fs.FS, host string) http.Handler {
 		}
 		s.config = &cfg
 		verified := s.verified[provID] || s.verified[cfg.Endpoint]
+		if cfg.Harness != "" {
+			probe := explain.ProbeHarness(r.Context(), cfg.Harness)
+			if probe.Auth == "signed_in" {
+				verified = true
+				s.verified[provID] = true
+			}
+		}
 		s.mu.Unlock()
 		writeJSON(w, map[string]any{
 			"configured": true,
