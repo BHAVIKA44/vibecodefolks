@@ -254,7 +254,18 @@ func Collect(dir string) (Evidence, error) {
 			continue
 		}
 		// Single-line imports are optional context, not semantic relationship claims.
-		contextLines := importLines(source)
+		presentNew := map[int]bool{}
+		for _, line := range lines {
+			if line.Side == "new" {
+				presentNew[line.Number] = true
+			}
+		}
+		var contextLines []EvidenceLine
+		for _, line := range importLines(source) {
+			if !presentNew[line.Number] {
+				contextLines = append(contextLines, line)
+			}
+		}
 		if len(contextLines) > 0 {
 			patch = append(patch, []byte("\n[Additional import context from the current file]\n")...)
 			for _, line := range contextLines {
@@ -302,7 +313,7 @@ func parseEvidenceLines(patch []byte) []EvidenceLine {
 	return out
 }
 
-var importPattern = regexp.MustCompile(`^\s*(?:import\s+[^({]|from\s+\S+\s+import\s+|use\s+[A-Za-z_]|require(?:_once)?\s*\()`)
+var importPattern = regexp.MustCompile(`^\s*(?:import\s+(?:[^({]|\{[^}]*\}\s*from\s+\S+)|from\s+\S+\s+import\s+|use\s+[A-Za-z_]|require(?:_once)?\s*\()`)
 
 func importLines(source []byte) []EvidenceLine {
 	var lines []EvidenceLine

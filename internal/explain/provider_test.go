@@ -190,6 +190,25 @@ func TestRelationshipNeedsBothReferences(t *testing.T) {
 	}
 }
 
+// Live Groq qwen/qwen3.8-27b returned one single-citation relationship among
+// otherwise valid findings; the whole explanation used to be discarded.
+func TestDecodeDropsSingleReferenceRelationshipButKeepsExplanation(t *testing.T) {
+	ev := fixture()
+	ev.Files[0].Lines = append(ev.Files[0].Lines, analysis.EvidenceLine{Side: "new", Number: 3, Text: "call"})
+	content := strings.Replace(answer("main.go"), `"relationships":[]`, `"relationships":[`+
+		`{"title":"One end","explanation":"Only one citation.","references":[{"path":"main.go","side":"new","start":2,"end":2}]},`+
+		`{"title":"Two ends","explanation":"Connects lines.","references":[{"path":"main.go","side":"new","start":2,"end":2},{"path":"main.go","side":"new","start":3,"end":3}]}]`, 1)
+	got, err := decodeExplanation(content, ev)
+	if err != nil || len(got.Relationships) != 1 || got.Relationships[0].Title != "Two ends" || len(got.Changes) != 1 {
+		t.Fatalf("relationships=%+v err=%v", got.Relationships, err)
+	}
+	// Citations outside the evidence are still rejected, never rewritten.
+	bad := strings.Replace(answer("main.go"), `"start":2,"end":2`, `"start":7,"end":7`, 1)
+	if _, err := decodeExplanation(bad, ev); err == nil {
+		t.Fatal("accepted out-of-evidence change citation")
+	}
+}
+
 func TestCodexHarnessUsesLocalCLIAndValidatesResult(t *testing.T) {
 	dir := t.TempDir()
 	binary := filepath.Join(dir, "codex")
@@ -200,12 +219,28 @@ func TestCodexHarnessUsesLocalCLIAndValidatesResult(t *testing.T) {
 	source := fmt.Sprintf(`package main
 import ("os"; "bytes")
 func main() {
+	for _, a := range os.Args {
+		if a == "--help" {
+			os.Stdout.WriteString("--sandbox --output-schema --output-last-message --ephemeral --skip-git-repo-check --model\n")
+			return
+		}
+		if a == "--version" {
+			os.Stdout.WriteString("codex-cli 0.166.0\n")
+			return
+		}
+	}
+	if len(os.Args) > 2 && os.Args[1] == "login" && os.Args[2] == "status" {
+		os.Stdout.WriteString("Logged in using ChatGPT\n")
+		return
+	}
 	if os.Getenv("VIBE_TEST_FAIL") == "auth" { os.Stderr.WriteString("not logged in secret-should-not-escape"); os.Exit(1) }
+	if os.Getenv("VIBE_TEST_FAIL") == "quota" { os.Stderr.Write(bytes.Repeat([]byte("echoed-prompt\n"), 2000)); os.Stderr.WriteString("ERROR: You’ve hit your usage limit. secret-should-not-escape"); os.Exit(1) }
+	if os.Getenv("VIBE_TEST_FAIL") == "model" { os.Stderr.WriteString("ERROR: The model is not supported secret-should-not-escape"); os.Exit(1) }
 	if os.Getenv("VIBE_TEST_FAIL") == "process" { os.Stderr.WriteString("secret-should-not-escape"); os.Exit(1) }
 	var out, schema string
 	for i := 1; i+1 < len(os.Args); i++ {
 		switch os.Args[i] {
-		case "-o": out = os.Args[i+1]
+		case "-o", "--output-last-message": out = os.Args[i+1]
 		case "--output-schema": schema = os.Args[i+1]
 		}
 	}
@@ -237,7 +272,7 @@ func main() {
 	if err != nil || got.Summary != "A change" || got.Graph == nil || got.Quiz == nil || *got.Quiz.Questions[0].CorrectIndex != 1 {
 		t.Fatalf("harness response: %+v %v", got, err)
 	}
-	for _, tc := range []struct{ mode, expected string }{{"auth", "sign-in"}, {"process", "exited"}} {
+	for _, tc := range []struct{ mode, expected string }{{"auth", "sign-in"}, {"quota", "usage or rate limit"}, {"model", "selected model is not supported"}, {"process", "exited"}} {
 		t.Run(tc.mode, func(t *testing.T) {
 			t.Setenv("VIBE_TEST_FAIL", tc.mode)
 			_, err := ProviderFor(cfg).Explain(context.Background(), fixture())
@@ -253,5 +288,77 @@ func main() {
 	}
 	if _, err := NewHarnessConfig("unknown"); err == nil {
 		t.Fatal("accepted unknown harness")
+	}
+}
+
+func TestModelAgnosticCapabilitiesAndSchemaOrdering(t *testing.T) {
+	gptOss := CapabilitiesFor(Config{Endpoint: "https://api.groq.com/openai/v1/chat/completions", Model: "openai/gpt-oss-120b"})
+	if gptOss.StructuredMode != "strict_json_schema" || gptOss.ReasoningFields["reasoning_effort"] != "low" || gptOss.MaxCompletionTokens != 2000 {
+		t.Fatalf("unexpected gpt-oss capabilities: %+v", gptOss)
+	}
+	qwen := CapabilitiesFor(Config{Endpoint: "https://api.groq.com/openai/v1/chat/completions", Model: "qwen/qwen3.8-27b"})
+	if _, hasEffort := qwen.ReasoningFields["reasoning_effort"]; qwen.StructuredMode != "strict_json_schema" || qwen.ReasoningFields["reasoning_format"] != "hidden" || hasEffort || qwen.MaxCompletionTokens != 0 {
+		t.Fatalf("unexpected qwen capabilities: %+v", qwen)
+	}
+	gptOss20b := CapabilitiesFor(Config{Endpoint: "https://api.groq.com/openai/v1/chat/completions", Model: "openai/gpt-oss-20b"})
+	if gptOss20b.StructuredMode != "strict_json_schema" || gptOss20b.ReasoningFields["reasoning_effort"] != "low" {
+		t.Fatalf("unexpected gpt-oss-20b capabilities: %+v", gptOss20b)
+	}
+	llama := CapabilitiesFor(Config{Endpoint: "https://api.groq.com/openai/v1/chat/completions", Model: "llama-3.3-70b-versatile"})
+	if llama.StructuredMode != "json_object" || len(llama.ReasoningFields) != 0 {
+		t.Fatalf("Groq llama should use json_object without reasoning flags: %+v", llama)
+	}
+	o3 := CapabilitiesFor(Config{Endpoint: "https://api.openai.com/v1/chat/completions", Model: "o3-mini"})
+	if o3.SupportsTemperature || o3.MaxCompletionTokens != 0 || len(o3.ReasoningFields) != 0 {
+		t.Fatalf("OpenAI o3-mini must omit temperature and Groq fields: %+v", o3)
+	}
+	gemini := CapabilitiesFor(Config{Endpoint: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", Model: "gemini-2.5-flash"})
+	if gemini.StructuredMode != "json_object" || gemini.MaxCompletionTokens != 0 || len(gemini.ReasoningFields) != 0 {
+		t.Fatalf("Gemini must use json_object without Groq fields: %+v", gemini)
+	}
+	whisper := CapabilitiesFor(Config{Endpoint: "https://api.groq.com/openai/v1/chat/completions", Model: "whisper-large-v3"})
+	if whisper.UnsupportedReason == "" {
+		t.Fatal("expected whisper-large-v3 to be rejected as non-chat model")
+	}
+
+	quizSchemaBytes, err := json.Marshal(dedicatedQuizSchema())
+	if err != nil {
+		t.Fatal(err)
+	}
+	quizSchemaStr := string(quizSchemaBytes)
+	expIdx := strings.Index(quizSchemaStr, `"explanation"`)
+	optExpIdx := strings.Index(quizSchemaStr, `"option_explanations"`)
+	correctIdx := strings.Index(quizSchemaStr, `"correct_index"`)
+	if expIdx < 0 || optExpIdx < 0 || correctIdx < 0 || !(expIdx < optExpIdx && optExpIdx < correctIdx) {
+		t.Fatalf("quiz schema properties not in logical order: exp=%d optExp=%d correct=%d", expIdx, optExpIdx, correctIdx)
+	}
+}
+
+func TestDiscoverModelsFiltersNonChatModels(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/models" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]string{
+				{"id": "whisper-large-v3"},
+				{"id": "meta-llama/llama-prompt-guard-2-86m"},
+				{"id": "qwen/qwen3.8-27b"},
+				{"id": "openai/gpt-oss-120b"},
+			},
+		})
+	}))
+	defer srv.Close()
+	cfg, err := NewConfig(srv.URL+"/v1/chat/completions", "discovery", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	models, err := DiscoverModels(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("DiscoverModels failed: %v", err)
+	}
+	if len(models) != 2 || models[0] != "openai/gpt-oss-120b" || models[1] != "qwen/qwen3.8-27b" {
+		t.Fatalf("unexpected discovered models: %v", models)
 	}
 }

@@ -124,18 +124,27 @@ func TestEvidenceSkipsOversizedDiffAndSecretOutsideHunk(t *testing.T) {
 func TestImportContext(t *testing.T) {
 	d := repo(t)
 	write(t, d, "main.py", []byte("import os\n"+strings.Repeat("# filler\n", 8)+"old = 1\n"))
+	write(t, d, "hook.ts", []byte("import { useEffect, useState } from 'react';\n"+strings.Repeat("// filler\n", 8)+"export const x = 1;\n"))
 	gitTest(t, d, "add", ".")
 	gitTest(t, d, "commit", "-m", "base")
 	write(t, d, "main.py", []byte("import os\n"+strings.Repeat("# filler\n", 8)+"new = 1\n"))
+	write(t, d, "hook.ts", []byte("import { useEffect, useState } from 'react';\n"+strings.Repeat("// filler\n", 8)+"export const x = 2;\n"))
 	ev, err := Collect(d)
-	if err != nil || len(ev.Files) != 1 {
+	if err != nil || len(ev.Files) != 2 {
 		t.Fatalf("collect: %+v %v", ev, err)
 	}
-	if !strings.Contains(ev.Files[0].Excerpt, "1: import os") {
-		t.Fatalf("import absent: %s", ev.Files[0].Excerpt)
+	byPath := map[string]EvidenceFile{}
+	for _, f := range ev.Files {
+		byPath[f.Path] = f
+	}
+	if !strings.Contains(byPath["main.py"].Excerpt, "1: import os") {
+		t.Fatalf("import absent: %s", byPath["main.py"].Excerpt)
+	}
+	if !strings.Contains(byPath["hook.ts"].Excerpt, "1: import { useEffect, useState } from 'react';") {
+		t.Fatalf("named TS import absent: %s", byPath["hook.ts"].Excerpt)
 	}
 	found := false
-	for _, l := range ev.Files[0].Lines {
+	for _, l := range byPath["main.py"].Lines {
 		if l.Side == "new" && l.Number == 1 && l.Text == "import os" {
 			found = true
 		}

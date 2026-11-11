@@ -103,13 +103,14 @@ async function generateQuiz(consent) {
 }
 async function startQuiz(signal) {
   if (!quizState) return;
+  const abortSignal = signal && typeof signal.aborted === 'boolean' ? signal : undefined;
   const version = quizVersion;
   const button = element('quiz-start');
   button.disabled = true;
   element('quiz-status').textContent = 'Checking the local evidence snapshot…';
   try {
-    const current = await post('/api/quiz/fresh', {snapshot:quizState.snapshot}, signal);
-    if (signal?.aborted) { quizState = null; element('quiz-generate').hidden = false; element('quiz-status').textContent = 'Quiz request canceled. You can try again.'; return; }
+    const current = await post('/api/quiz/fresh', {snapshot:quizState.snapshot}, abortSignal);
+    if (abortSignal?.aborted) { quizState = null; element('quiz-generate').hidden = false; element('quiz-status').textContent = 'Quiz request canceled. You can try again.'; return; }
     if (version !== quizVersion || !quizState) return;
     if (!current.fresh) { clearQuiz(); element('quiz-section').hidden = false; element('quiz-start').hidden = true; element('quiz-status').textContent = 'The evidence has changed. Refresh and explain the changes again before taking the quiz.'; return; }
     quizState.index = 0; quizState.score = 0; quizState.answered = false; quizState.answers = [];
@@ -118,7 +119,7 @@ async function startQuiz(signal) {
     renderQuestion();
   } catch (_) {
     if (version === quizVersion) {
-      if (signal?.aborted) {
+      if (abortSignal?.aborted) {
         quizState = null;
         element('quiz-generate').hidden = false;
         element('quiz-status').textContent = 'Quiz request canceled. You can try again.';
@@ -143,12 +144,15 @@ function renderQuestion() {
       s.answered = true;
       for (const optionButton of options.children) optionButton.disabled = true;
       const correct = index === q.correct_index;
+      button.className = `quiz-option ${correct ? 'selected-correct' : 'selected-wrong'}`;
+      if (!correct && options.children[q.correct_index]) options.children[q.correct_index].className = 'quiz-option correct-answer';
       if (correct) s.score++;
       s.answers.push({question: q, selected: index, correct});
       feedback.append(text('p', correct ? 'Correct' : 'Incorrect', 'quiz-reaction'), text('h4', `Correct answer: ${String.fromCharCode(65 + q.correct_index)}. ${q.options[q.correct_index]}`), text('p', q.explanation, 'muted'), text('p', 'AI interpretation; check the cited evidence. Runtime behavior is unverified.', 'hint'));
       if (q.option_explanations?.[index]) feedback.append(text('p', `Your choice: ${q.option_explanations[index]}`, 'muted'));
       graphReferences(feedback, q.references, s.evidence);
-      const next = document.createElement('button'); next.type = 'button'; next.textContent = s.index + 1 === s.questions.length ? 'See score' : 'Next Question'; next.addEventListener('click', () => { if (!quizState) return; s.index++; s.answered = false; if (s.index === s.questions.length) renderScore(); else renderQuestion(); }); feedback.append(next);
+      const next = document.createElement('button'); next.type = 'button'; next.className = 'quiz-next'; next.textContent = s.index + 1 === s.questions.length ? 'See score' : 'Next Question'; next.addEventListener('click', () => { if (!quizState) return; s.index++; s.answered = false; if (s.index === s.questions.length) renderScore(); else renderQuestion(); }); feedback.append(next);
+      feedback.scrollIntoView?.({block: 'nearest'});
     });
     options.append(button);
   });
@@ -167,5 +171,5 @@ function renderScore() {
     graphReferences(review, question.references, s.evidence);
     panel.append(review);
   }
-  const retry = document.createElement('button'); retry.type = 'button'; retry.textContent = 'Retry same questions'; retry.addEventListener('click', startQuiz); panel.append(retry);
+  const retry = document.createElement('button'); retry.type = 'button'; retry.className = 'quiz-retry'; retry.textContent = 'Retry same questions'; retry.addEventListener('click', () => startQuiz()); panel.append(retry);
 }

@@ -14,17 +14,35 @@ function svgText(parent, label, x, y, className) {
 function wrapLabel(label, width = 23, max = 2) {
   const chars = Array.from(label);
   const rows = [];
-  for (let i = 0; i < chars.length && rows.length < max; i += width) rows.push(chars.slice(i, i + width).join(''));
-  if (chars.length > width * max) rows[max - 1] = rows[max - 1].slice(0, -1) + '…';
+  let start = 0;
+  while (start < chars.length && rows.length < max) {
+    if (chars.length - start <= width) { rows.push(chars.slice(start).join('')); start = chars.length; break; }
+    let end = start + width;
+    if (rows.length < max - 1) {
+      let split = -1;
+      for (let k = end - 1; k > start + 4; k--) {
+        if ('. /:_\\-'.includes(chars[k])) { split = k + 1; break; }
+      }
+      if (split === -1) {
+        for (let k = end - 1; k > start + 6; k--) {
+          if (/[a-z0-9]/.test(chars[k - 1]) && /[A-Z]/.test(chars[k])) { split = k; break; }
+        }
+      }
+      if (split !== -1 && chars.length - split <= width * (max - rows.length - 1) + 4) end = split;
+    }
+    rows.push(chars.slice(start, end).join('').trimEnd());
+    start = end;
+  }
+  if (start < chars.length) rows[max - 1] = rows[max - 1].slice(0, -1) + '…';
   return rows;
 }
 function graphReferences(panel, refs, evidence) {
   for (const ref of refs) {
     const detail = document.createElement('details');
     detail.append(text('summary', `${ref.path} · ${ref.side} ${ref.start}–${ref.end}`));
-    if (typeof citationButton === 'function') detail.append(citationButton(ref));
+    if (typeof citationButton === 'function') detail.append(citationButton(ref, `Open in Code changes (${ref.path} · ${ref.side} ${ref.start}–${ref.end})`));
     const file = evidence.files.find((entry) => entry.path === ref.path);
-    if (file) detail.append(text('pre', file.excerpt, 'excerpt'));
+    if (file) detail.append(typeof renderDiffExcerpt === 'function' ? renderDiffExcerpt(file.excerpt, ref).lines : text('pre', file.excerpt, 'excerpt'));
     panel.append(detail);
   }
 }
@@ -60,8 +78,8 @@ function renderGraph(graph, evidence) {
   const distinct = [...new Set(depths.values())].sort((a,b) => a-b);
   const columns = new Map(distinct.map((value,index) => [value,index]));
   const rows = new Map(); const positions = new Map();
-  graph.nodes.forEach(node => { const col=columns.get(depths.get(node.id)); const row=rows.get(col)||0; rows.set(col,row+1); positions.set(node.id, {x: 30+col*270,y: 40+row*150}); });
-  const width = Math.max(300, distinct.length*270+30), height = Math.max(220, Math.max(...rows.values())*150+60);
+  graph.nodes.forEach(node => { const col=columns.get(depths.get(node.id)); const row=rows.get(col)||0; rows.set(col,row+1); positions.set(node.id, {x: 30+col*340,y: 40+row*150}); });
+  const width = Math.max(300, distinct.length*340+30), height = Math.max(220, Math.max(...rows.values())*150+60);
   svg.setAttribute('viewBox', `0 0 ${width} ${height}`); svg.setAttribute('width', width); svg.setAttribute('height', height);
   svg.setAttribute('data-base-width', width); svg.setAttribute('data-base-height', height);
   graphZoomLevel = 1;
@@ -72,6 +90,15 @@ function renderGraph(graph, evidence) {
     group.addEventListener('click', action);
     group.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); action(); } });
   };
+  const nodeGroups = [];
+  for (const node of graph.nodes) {
+    const {x,y} = positions.get(node.id);
+    const group = svgElement('g', {class:`graph-node ${node.status}`, 'aria-label':`${node.label}, ${node.status}. Select for details.`});
+    group.append(svgElement('rect',{x,y,width:210,height:90,rx:12}));
+    svgText(group, node.status.toUpperCase(), x+14, y+23, 'svg-status');
+    wrapLabel(node.label).forEach((line, i) => svgText(group,line,x+14,y+46+i*18,'svg-label'));
+    bind(group, () => { for (const item of nodeGroups) item.group.setAttribute('class', `graph-node ${item.node.status}`); group.setAttribute('class', `graph-node ${node.status} selected`); graphDetail(node,'node',evidence,graph); }); nodeGroups.push({group,node}); svg.append(group);
+  }
   for (const edge of graph.edges) {
     const from = positions.get(edge.from), to = positions.get(edge.to);
     if (!from || !to) continue;
@@ -81,17 +108,8 @@ function renderGraph(graph, evidence) {
     const group = svgElement('g', {class:'graph-edge', 'aria-label':`Inferred connection: ${edge.label}`});
     const line = svgElement('path', {d:`M ${x1} ${y1} C ${(x1+x2)/2} ${y1}, ${(x1+x2)/2} ${y2}, ${x2} ${y2}`, fill:'none', 'marker-end':'url(#arrowhead)'});
     group.append(line);
-    svgText(group, wrapLabel(edge.label, 16, 1)[0], (x1+x2)/2, (y1+y2)/2-8, 'svg-edge-label').setAttribute('text-anchor','middle');
+    svgText(group, wrapLabel(edge.label, 20, 1)[0], (x1+x2)/2, (y1+y2)/2-8, 'svg-edge-label').setAttribute('text-anchor','middle');
     bind(group, () => graphDetail(edge, 'edge', evidence, graph)); svg.append(group);
-  }
-  const nodeGroups = [];
-  for (const node of graph.nodes) {
-    const {x,y} = positions.get(node.id);
-    const group = svgElement('g', {class:`graph-node ${node.status}`, 'aria-label':`${node.label}, ${node.status}. Select for details.`});
-    group.append(svgElement('rect',{x,y,width:210,height:90,rx:12}));
-    svgText(group, node.status.toUpperCase(), x+14, y+23, 'svg-status');
-    wrapLabel(node.label).forEach((line, i) => svgText(group,line,x+14,y+46+i*18,'svg-label'));
-    bind(group, () => { for (const item of nodeGroups) item.group.setAttribute('class', `graph-node ${item.node.status}`); group.setAttribute('class', `graph-node ${node.status} selected`); graphDetail(node,'node',evidence,graph); }); nodeGroups.push({group,node}); svg.append(group);
   }
   if (nodeGroups.length) nodeGroups[0].group.setAttribute('class', `graph-node ${nodeGroups[0].node.status} selected`);
   graphDetail(graph.nodes[0], 'node', evidence, graph); graphZoom(0);

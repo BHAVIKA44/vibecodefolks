@@ -61,25 +61,48 @@ The path can point anywhere inside a Git repository; omit it for the current dir
 
 1. An AI coding agent changes your repository.
 2. Run VibeCodeFolks and inspect the Git changes in your browser.
-3. Select the locally installed Codex harness or configure an AI provider, review the evidence preview, and choose whether to send it.
-4. Explore the explanation and change map, then try the optional quiz.
+3. Select your local coding agent (**Codex CLI**, **Claude Code**, or **Gemini CLI**) or configure an API provider (**Groq**, **OpenAI**, **Gemini**, **Grok**, **Ollama**, or **LM Studio**).
+4. Review the evidence preview and choose whether to send it.
+5. Explore the explanation, source citations, and change map, then test your comprehension with an evidence-backed quiz.
 
 ## Features
 
 - Inspect working-tree Git changes or, when clean, the last commit.
 - Open a changed file to inspect bounded diff evidence before configuring any provider. Review the explanation snapshot separately before sending it.
-- Work through an overview, cited code changes, an optional inferred flow, and an understanding quiz.
+- **Coding agent harness support**: Uses your existing local CLI logins (Codex CLI, Claude Code, Gemini CLI) in a strictly read-only sandbox with zero API key configuration.
+- **Model-agnostic API support**: Connects to Groq, OpenAI, Google Gemini, xAI Grok, Ollama, and LM Studio with lazy model discovery and session memory.
+- Work through an overview, cited code changes, an optional inferred flow, and an interactive comprehension quiz with wrong-answer misconception explanations.
 - Run locally without a database, cloud service, or frontend runtime dependency.
 
 ## Git changes
 
 The dashboard shows the combined working-tree diff from `HEAD`, plus untracked non-ignored files. When the tree is clean it displays **Last Commit**, compared to its first parent. Initial commits, repositories without commits, detached HEAD, renames, and binary files are supported. Refresh reruns Git analysis. Changes canceled between the index and working tree can have no combined difference; a warning is shown. Staged deletions followed by an untracked replacement are shown once with unavailable net statistics.
 
-## Optional AI explanation
+> [!NOTE]
+> **Working Tree Limitation:** VibeCodeFolks v1.0.0 is intentionally scoped to the working tree (uncommitted changes) or the most recent commit when clean. Comparing arbitrary revision ranges (e.g. `main..feature-branch`) is planned for a future release.
 
-The dashboard's **Codex (local)** option follows the local-harness model: it uses an already installed and authenticated Codex CLI, so VibeCodeFolks does not receive or save an API key. It sends only the reviewed evidence and starts Codex in a temporary, read-only directory. The Codex CLI remains responsible for its account, selected model, and provider access. Evidence can reach the service configured in that CLI. If the CLI is unavailable or cannot run noninteractively, VibeCodeFolks reports that failure and does not display an explanation.
+## Coding agents & AI explanations
 
-See [provider compatibility](docs/provider-compatibility.md) for harness discovery and current integration limits. Direct HTTP providers remain available. Choose a provider, enter its model ID and any required key, then select **Save settings**. Saving only checks local configuration and, for Codex, whether the CLI is on PATH. The first explanation request checks credentials and model access. You can also set these environment variables before starting the CLI:
+### Use my coding agent (Local CLIs)
+
+VibeCodeFolks can delegate explanation generation to your existing local coding CLI:
+- **Codex CLI** (`@openai/codex`, v0.166.0 or newer): Uses your existing ChatGPT login. Verified live on multi-file repositories.
+- **Claude Code** (`@anthropic-ai/claude-code`): Uses your existing Claude login (`claude /login`). Verified with deterministic mock test suites; marked unverified until live inference completes.
+- **Gemini CLI** (`@google/gemini-cli`): Uses your Gemini CLI login (`gemini auth login`) or `GEMINI_API_KEY`. Verified with deterministic mock test suites; marked unverified until live inference completes.
+
+**Safety Invariants for Coding Agents:**
+- **Strictly read-only:** VibeCodeFolks runs CLIs in empty temporary directories (`os.MkdirTemp`). The CLI cannot edit repository files or run arbitrary workspace commands.
+- **No dangerous bypass flags:** Flags such as `--dangerously-bypass-approvals-and-sandbox`, `--approve-for-me`, `yolo`, and `auto_edit` are strictly prohibited.
+- **No API key required:** Reuses your existing CLI session without storing or transmitting API keys to VibeCodeFolks. Note that local CLIs may transmit code to their respective upstream AI providers under your existing account.
+
+### Use an API provider
+
+Direct HTTP providers are also supported. Choose a provider, enter its model ID and any required key, then select **Save settings**:
+- **Groq**: Verified with `openai/gpt-oss-120b` and `qwen/qwen3.8-27b` using strict JSON schema output.
+- **OpenAI**: Compatible with `gpt-4o`, `gpt-4.1`, `o1`, `o3`, and `o3-mini`.
+- **Google Gemini**: Compatible with `gemini-2.5-flash` and `gemini-2.5-pro`.
+- **xAI**: Compatible with `grok-2` and `grok-3` via the Responses API.
+- **Ollama & LM Studio**: Local loopback providers requiring no API keys.
 
 ```sh
 export VIBECODEFOLKS_AI_ENDPOINT="https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"

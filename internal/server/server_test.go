@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -237,6 +238,58 @@ func TestHarnessDiscoveryReportsAvailabilityWithoutClaimingSupport(t *testing.T)
 	}
 }
 
+func TestMultiHarnessAPIEndpoints(t *testing.T) {
+	emptyDir := t.TempDir()
+	t.Setenv("PATH", emptyDir) // ensure none are installed
+	handler := Handler(emptyDir, fstest.MapFS{}, "example.test")
+
+	for _, h := range []string{"codex", "claude", "gemini"} {
+		// Discover models when not installed
+		body := strings.NewReader(fmt.Sprintf(`{"harness":%q}`, h))
+		r := httptest.NewRequest("POST", "http://example.test/api/provider/models", body)
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("Origin", "http://example.test")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "not installed") {
+			t.Fatalf("expected not installed for %s, got %d %s", h, w.Code, w.Body.String())
+		}
+
+		// Configure provider when not installed
+		body = strings.NewReader(fmt.Sprintf(`{"harness":%q,"model":""}`, h))
+		r = httptest.NewRequest("POST", "http://example.test/api/provider", body)
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("Origin", "http://example.test")
+		w = httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "not installed") {
+			t.Fatalf("expected not installed for %s setup, got %d %s", h, w.Code, w.Body.String())
+		}
+
+		// Configure with flag injection attempt
+		body = strings.NewReader(fmt.Sprintf(`{"harness":%q,"model":"--dangerously-bypass-permissions"}`, h))
+		r = httptest.NewRequest("POST", "http://example.test/api/provider", body)
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("Origin", "http://example.test")
+		w = httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "Invalid") {
+			t.Fatalf("expected flag model rejection for %s, got %d %s", h, w.Code, w.Body.String())
+		}
+	}
+
+	// Unknown harness
+	body := strings.NewReader(`{"harness":"unknown"}`)
+	r := httptest.NewRequest("POST", "http://example.test/api/provider", body)
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Origin", "http://example.test")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "unsupported") {
+		t.Fatalf("expected unsupported for unknown harness, got %d %s", w.Code, w.Body.String())
+	}
+}
+
 func TestDedicatedQuizUsesCapturedProviderAndFreshSnapshot(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
@@ -329,4 +382,56 @@ func TestQuizSessionExpiresWithoutFurtherRequests(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatal("expired quiz session was retained")
+}
+
+func TestProviderModelDiscoveryAndSessionSwitching(t *testing.T) {
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/models" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": []map[string]string{
+					{"id": "whisper-large-v3"},
+					{"id": "qwen/qwen3.8-27b"},
+					{"id": "openai/gpt-oss-20b"},
+				},
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer mock.Close()
+
+	h := Handler(t.TempDir(), fstest.MapFS{}, "example.test")
+	post := func(path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("POST", "http://example.test"+path, strings.NewReader(body))
+		req.Header.Set("Origin", "http://example.test")
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		return w
+	}
+
+	disc := post("/api/provider/models", `{"endpoint":"`+mock.URL+`/v1/chat/completions","api_key":"session-secret"}`)
+	if disc.Code != http.StatusOK {
+		t.Fatalf("discover: %d %s", disc.Code, disc.Body.String())
+	}
+	var discRes struct {
+		Verified bool     `json:"verified"`
+		KeySaved bool     `json:"key_saved"`
+		Models   []string `json:"models"`
+	}
+	if err := json.Unmarshal(disc.Body.Bytes(), &discRes); err != nil || !discRes.Verified || !discRes.KeySaved || len(discRes.Models) != 2 {
+		t.Fatalf("unexpected discovery payload: %+v %v", discRes, err)
+	}
+
+	// Non-chat audio model is rejected with a clear error.
+	badModel := post("/api/provider", `{"endpoint":"`+mock.URL+`/v1/chat/completions","model":"whisper-large-v3","api_key":""}`)
+	if badModel.Code != http.StatusBadRequest || !strings.Contains(badModel.Body.String(), "audio model") {
+		t.Fatalf("expected non-chat model rejection: %d %s", badModel.Code, badModel.Body.String())
+	}
+
+	// Valid chat model reuses the saved session key without requiring it to be re-sent.
+	goodModel := post("/api/provider", `{"endpoint":"`+mock.URL+`/v1/chat/completions","model":"qwen/qwen3.8-27b","api_key":""}`)
+	if goodModel.Code != http.StatusOK || !strings.Contains(goodModel.Body.String(), `"verified":true`) {
+		t.Fatalf("expected verified provider save: %d %s", goodModel.Code, goodModel.Body.String())
+	}
 }

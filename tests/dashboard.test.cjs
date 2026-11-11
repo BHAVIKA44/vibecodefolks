@@ -320,3 +320,207 @@ test('send-evidence button when pending is null does not throw', async () => {
   });
   assert.match(elements.get('explain-status').textContent, /No prepared evidence/);
 });
+
+test('import context lines are rendered as numbered diff rows and highlighted when cited', async () => {
+  const {elements,context,load}=environment(() => Promise.resolve(jsonResponse(changes)));
+  load('graph.js'); load('quiz.js'); load('app.js');
+  await new Promise(resolve=>setImmediate(resolve));
+  const excerpt = '@@ -10,2 +10,2 @@\n-oldCall();\n+newCall();\n\n[Additional import context from the current file]\n1: import { useEffect } from "react";\n';
+  context.fixtureEvidence={files:[{path:'src/hook.ts',type:'modified',excerpt}]};
+  vm.runInContext("snapshotEvidence=fixtureEvidence; showCode('src/hook.ts',{path:'src/hook.ts',side:'new',start:1,end:1})",context);
+  const diff=elements.get('code-view').children.find(e=>e.className==='diff-lines');
+  const highlighted=diff.children.filter(e=>e.className.includes('highlighted'));
+  assert.equal(highlighted.length,1);
+  assert.match(allText(highlighted[0]), /import \{ useEffect \}/);
+});
+
+test('provider failure during sendExplanation preserves pending token and consent panel for immediate retry', async () => {
+  let explainCalls = 0;
+  const fetch = url => {
+    if (url === '/api/harnesses') return Promise.resolve(jsonResponse([]));
+    if (url === '/api/changes') return Promise.resolve(jsonResponse({...changes, total_files: 1}));
+    if (url === '/api/explain/prepare') return Promise.resolve(jsonResponse({token:'keep-me',local:true,endpoint:'Codex local harness',model:'',evidence:{files:[]},skipped:[]}));
+    if (url === '/api/explain') {
+      explainCalls++;
+      if (explainCalls === 1) return Promise.resolve({ok:false, json:async()=>({error:'Codex reported a usage or rate limit.'})});
+      return Promise.resolve(jsonResponse({snapshot:'a'.repeat(64),captured_at:new Date().toISOString(),explanation:{summary:'Done',scope:'Working Tree',changes:[],impacts:[],relationships:[],uncertainties:[],limitations:[]},evidence:{files:[],skipped:[]}}));
+    }
+    throw new Error(`unexpected ${url}`);
+  };
+  const {elements,load}=environment(fetch); load('graph.js'); load('quiz.js'); load('app.js');
+  await new Promise(resolve=>setImmediate(resolve));
+  await elements.get('explain').listeners.click();
+  await elements.get('send-evidence').listeners.click();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(elements.get('consent-panel').hidden, false);
+  assert.match(elements.get('explain-status').textContent, /usage or rate limit/);
+  await elements.get('send-evidence').listeners.click();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(explainCalls, 2);
+  assert.equal(elements.get('explanation').hidden, false);
+});
+
+test('clicking Code changes tab selects first file and supports prev/next navigation', async () => {
+  const multiChanges = {...changes, total_files: 2, files: [{path:'a.go',type:'modified',lines_added:1,lines_deleted:0},{path:'b.go',type:'modified',lines_added:2,lines_deleted:1}]};
+  const fetch = url => {
+    if (url === '/api/harnesses') return Promise.resolve(jsonResponse([]));
+    if (url === '/api/changes') return Promise.resolve(jsonResponse(multiChanges));
+    if (url === '/api/evidence') return Promise.resolve(jsonResponse({files:[{path:'a.go',type:'modified',excerpt:'@@ -1 +1 @@\n-a\n+a2'},{path:'b.go',type:'modified',excerpt:'@@ -1 +1 @@\n-b\n+b2'}],skipped:[]}));
+    throw new Error(`unexpected ${url}`);
+  };
+  const {elements,load}=environment(fetch); load('graph.js'); load('quiz.js'); load('app.js');
+  await new Promise(resolve=>setImmediate(resolve));
+  elements.get('tab-code').listeners.click();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.match(allText(elements.get('code-view')), /a\.go/);
+  assert.match(allText(elements.get('code-view')), /1 \/ 2/);
+  const header = elements.get('code-view').children.find(e=>e.className==='code-path');
+  const nav = header.children.find(e=>e.className==='code-nav');
+  const nextBtn = nav.children.find(e=>e.textContent.includes('Next'));
+  nextBtn.listeners.click();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.match(allText(elements.get('code-view')), /b\.go/);
+  assert.match(allText(elements.get('code-view')), /2 \/ 2/);
+});
+
+test('retry button click event does not pass DOM Event as fetch AbortSignal', async () => {
+  const signals = [];
+  const fetch = (url, options) => {
+    if (url === '/api/harnesses') return Promise.resolve(jsonResponse([]));
+    if (url === '/api/changes') return Promise.resolve(jsonResponse(changes));
+    if (url === '/api/quiz/fresh') {
+      signals.push(options?.signal);
+      if (options?.signal !== undefined && typeof options.signal.aborted !== 'boolean') {
+        return Promise.reject(new TypeError('Failed to convert value to AbortSignal'));
+      }
+      return Promise.resolve(jsonResponse({fresh:true}));
+    }
+    throw new Error(`unexpected ${url}`);
+  };
+  const {elements,context,load}=environment(fetch); load('graph.js'); load('quiz.js'); load('app.js');
+  await new Promise(resolve=>setImmediate(resolve));
+  context.result={snapshot:'a'.repeat(64),explanation:{quiz:sampleQuiz},evidence:{files:[]}};
+  vm.runInContext('prepareQuiz(result)',context);
+  await elements.get('quiz-start').listeners.click({type:'click'});
+  const panel=elements.get('quiz-content');
+  panel.children.find(e=>e.className==='quiz-options').children[1].listeners.click({type:'click'});
+  panel.children.find(e=>e.className==='quiz-feedback').children.find(e=>e.textContent==='See score').listeners.click({type:'click'});
+  await panel.children.find(e=>e.textContent==='Retry same questions').listeners.click({type:'click'});
+  assert.deepEqual(signals, [undefined, undefined]);
+  assert.ok(panel.children.some(e=>e.className==='quiz-options'));
+});
+
+test('lazy model discovery populates available models and preserves provider session state across switches', async () => {
+  const savedPayloads = [];
+  const fetch = (url, options) => {
+    if (url === '/api/harnesses') return Promise.resolve(jsonResponse([]));
+    if (url === '/api/changes') return Promise.resolve(jsonResponse(changes));
+    if (url === '/api/provider/models') {
+      return Promise.resolve(jsonResponse({
+        provider: 'groq',
+        verified: true,
+        key_saved: true,
+        models: ['openai/gpt-oss-120b', 'qwen/qwen3.8-27b', 'openai/gpt-oss-20b'],
+      }));
+    }
+    if (url === '/api/provider') {
+      const parsed = JSON.parse(options.body);
+      savedPayloads.push(parsed);
+      return Promise.resolve(jsonResponse({
+        configured: true,
+        verified: parsed.endpoint.includes('groq'),
+        key_saved: true,
+      }));
+    }
+    throw new Error(`unexpected ${url}`);
+  };
+  const {elements,load}=environment(fetch); load('graph.js'); load('quiz.js'); load('app.js');
+  await new Promise(resolve=>setImmediate(resolve));
+  elements.get('provider-choice').value = 'groq';
+  elements.get('provider-choice').listeners.change();
+  elements.get('provider-key').value = 'test-session-key';
+  await elements.get('provider-discover').listeners.click();
+  assert.equal(elements.get('provider-model-select-label').hidden, false);
+  assert.equal(elements.get('provider-model-select').children.length, 4);
+  elements.get('provider-model-select').value = 'qwen/qwen3.8-27b';
+  elements.get('provider-model-select').listeners.change();
+  assert.equal(elements.get('provider-model').value, 'qwen/qwen3.8-27b');
+  await elements.get('provider-connect').listeners.click();
+  assert.match(elements.get('provider-badge').textContent, /Groq · qwen\/qwen3\.8-27b \(verified\)/);
+  assert.equal(elements.get('provider-key').placeholder, 'Saved for session (leave blank to keep)');
+
+  // Switch to OpenAI (unverified) and back to Groq
+  elements.get('provider-choice').value = 'openai';
+  elements.get('provider-choice').listeners.change();
+  assert.equal(elements.get('provider-model-select-label').hidden, true);
+  elements.get('provider-choice').value = 'groq';
+  elements.get('provider-choice').listeners.change();
+  assert.equal(elements.get('provider-model').value, 'qwen/qwen3.8-27b');
+  assert.equal(elements.get('provider-model-select-label').hidden, false);
+});
+
+test('coding agent selection supports Codex, Claude Code, and Gemini CLI without API keys', async () => {
+  const calls = [];
+  const fetch = async (url, options) => {
+    calls.push({url, body: options?.body && JSON.parse(options.body)});
+    if (url === '/api/harnesses') {
+      return jsonResponse([
+        {name:'codex',display:'Codex CLI',installed:true,supported:true,version:'0.166.0',auth:'signed_in'},
+        {name:'claude',display:'Claude Code',installed:false,supported:true},
+        {name:'gemini',display:'Gemini CLI',installed:false,supported:true},
+      ]);
+    }
+    if (url === '/api/changes') return jsonResponse(changes);
+    if (url === '/api/provider/models') {
+      const parsed = JSON.parse(options.body);
+      const display = parsed.harness === 'codex' ? 'Codex CLI' : (parsed.harness === 'claude' ? 'Claude Code' : 'Gemini CLI');
+      return jsonResponse({
+        provider: parsed.harness,
+        verified: parsed.harness === 'codex',
+        models: [],
+        message: `${display} found on PATH.`,
+      });
+    }
+    if (url === '/api/provider') {
+      const parsed = JSON.parse(options.body);
+      return jsonResponse({
+        configured: true,
+        verified: parsed.harness === 'codex',
+        key_saved: false,
+        provider: parsed.harness,
+        model: parsed.model,
+      });
+    }
+    throw new Error(`unexpected ${url}`);
+  };
+
+  const {elements,load}=environment(fetch); load('graph.js'); load('quiz.js'); load('app.js');
+  await new Promise(resolve=>setImmediate(resolve));
+
+  // Check initial harness status text
+  assert.match(elements.get('harness-status').textContent, /Codex CLI: installed, signed in, available for setup/);
+  assert.match(elements.get('harness-status').textContent, /Claude Code: not installed, available for setup/);
+
+  // Codex CLI is default
+  assert.equal(elements.get('provider-key-label').hidden, true);
+  assert.match(elements.get('provider-model').placeholder, /Use Codex CLI default/);
+  assert.equal(elements.get('provider-discover').textContent, 'Check CLI');
+
+  await elements.get('provider-discover').listeners.click();
+  assert.match(elements.get('provider-status').textContent, /Codex CLI found on PATH/);
+
+  await elements.get('provider-connect').listeners.click();
+  assert.match(elements.get('provider-badge').textContent, /Codex CLI · default \(verified\)/);
+
+  // Switch to Claude Code
+  elements.get('provider-choice').value = 'claude';
+  elements.get('provider-choice').listeners.change();
+  assert.equal(elements.get('provider-key-label').hidden, true);
+  assert.match(elements.get('provider-model').placeholder, /Use Claude Code default/);
+
+  // Switch to Gemini CLI
+  elements.get('provider-choice').value = 'gemini-cli';
+  elements.get('provider-choice').listeners.change();
+  assert.equal(elements.get('provider-key-label').hidden, true);
+  assert.match(elements.get('provider-model').placeholder, /Use Gemini CLI default/);
+});

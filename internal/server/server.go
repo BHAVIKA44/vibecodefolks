@@ -1,14 +1,16 @@
 package server
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -30,6 +32,7 @@ type quizSession struct {
 	prepared prepared
 	expires  time.Time
 	busy     bool
+	busyCtx  context.Context
 	timer    *time.Timer
 }
 type state struct {
@@ -37,6 +40,30 @@ type state struct {
 	requests map[string]prepared
 	quizzes  map[string]quizSession
 	config   *explain.Config
+	keys     map[string]string
+	verified map[string]bool
+}
+
+func (s *state) resolveKeyLocked(endpoint, supplied string) string {
+	if supplied != "" {
+		return supplied
+	}
+	id := explain.ProviderID(endpoint, "")
+	if k := s.keys[id]; k != "" {
+		return k
+	}
+	if k := s.keys[endpoint]; k != "" {
+		return k
+	}
+	if id == "groq" {
+		if k := os.Getenv("GROQ_API_KEY"); k != "" {
+			return k
+		}
+	}
+	if os.Getenv("VIBECODEFOLKS_AI_ENDPOINT") == endpoint {
+		return os.Getenv("VIBECODEFOLKS_AI_API_KEY")
+	}
+	return ""
 }
 
 // Caller holds s.mu. Expired sessions release their captured evidence and provider
@@ -52,7 +79,12 @@ func (s *state) addQuizSessionLocked(token string, p prepared, now time.Time, li
 }
 
 func Handler(dir string, assets fs.FS, host string) http.Handler {
-	s := &state{requests: map[string]prepared{}, quizzes: map[string]quizSession{}}
+	s := &state{
+		requests: map[string]prepared{},
+		quizzes:  map[string]quizSession{},
+		keys:     map[string]string{},
+		verified: map[string]bool{},
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/harnesses", func(w http.ResponseWriter, r *http.Request) {
 		if !method(w, r, "GET") {
@@ -60,8 +92,12 @@ func Handler(dir string, assets fs.FS, host string) http.Handler {
 		}
 		type harnessStatus struct {
 			Name      string `json:"name"`
+			Display   string `json:"display,omitempty"`
 			Installed bool   `json:"installed"`
 			Supported bool   `json:"supported"`
+			Version   string `json:"version,omitempty"`
+			Auth      string `json:"auth,omitempty"`
+			Reason    string `json:"reason,omitempty"`
 		}
 		candidates := []struct {
 			name     string
@@ -74,16 +110,109 @@ func Handler(dir string, assets fs.FS, host string) http.Handler {
 		}
 		result := make([]harnessStatus, 0, len(candidates))
 		for _, candidate := range candidates {
-			installed := false
-			for _, command := range candidate.commands {
-				if _, err := exec.LookPath(command); err == nil {
-					installed = true
-					break
+			switch candidate.name {
+			case "codex", "claude", "gemini":
+				probe := explain.ProbeHarness(r.Context(), candidate.name)
+				result = append(result, harnessStatus{
+					Name:      candidate.name,
+					Display:   probe.Display,
+					Installed: probe.Installed,
+					Supported: probe.Supported,
+					Version:   probe.Version,
+					Auth:      probe.Auth,
+					Reason:    probe.Reason,
+				})
+			default:
+				installed := false
+				for _, command := range candidate.commands {
+					if _, err := exec.LookPath(command); err == nil {
+						installed = true
+						break
+					}
 				}
+				result = append(result, harnessStatus{
+					Name:      candidate.name,
+					Display:   candidate.name,
+					Installed: installed,
+					Supported: false,
+					Reason:    "Integration planned for future release",
+				})
 			}
-			result = append(result, harnessStatus{Name: candidate.name, Installed: installed, Supported: candidate.name == "codex"})
 		}
 		writeJSON(w, result)
+	})
+	mux.HandleFunc("/api/provider/models", func(w http.ResponseWriter, r *http.Request) {
+		if !method(w, r, "POST") || !jsonRequest(w, r) {
+			return
+		}
+		var in struct {
+			Endpoint string `json:"endpoint"`
+			APIKey   string `json:"api_key"`
+			Harness  string `json:"harness"`
+		}
+		if json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&in) != nil {
+			writeError(w, http.StatusBadRequest, "Invalid model discovery request")
+			return
+		}
+		if in.Harness != "" {
+			h := strings.ToLower(strings.TrimSpace(in.Harness))
+			switch h {
+			case "codex", "claude", "gemini":
+				probe := explain.ProbeHarness(r.Context(), h)
+				if !probe.Installed {
+					writeError(w, http.StatusBadRequest, fmt.Sprintf("%s is not installed or is missing from the server PATH. %s", probe.Display, probe.InstallHint))
+					return
+				}
+				if !probe.Supported {
+					writeError(w, http.StatusBadRequest, probe.Reason)
+					return
+				}
+				msg := fmt.Sprintf("%s found on PATH. Leave model blank to use your %s default, or enter a custom model ID.", probe.Display, probe.Display)
+				if probe.Auth == "signed_out" {
+					msg = fmt.Sprintf("%s found on PATH, but reports not logged in. %s", probe.Display, probe.SignInHint)
+				} else if probe.Auth == "signed_in" {
+					msg = fmt.Sprintf("%s found on PATH and signed in. Leave model blank to use your %s default, or enter a custom model ID.", probe.Display, probe.Display)
+				}
+				writeJSON(w, map[string]any{
+					"provider": h,
+					"verified": probe.Auth == "signed_in",
+					"models":   []string{},
+					"message":  msg,
+				})
+				return
+			default:
+				writeError(w, http.StatusBadRequest, "unsupported local harness")
+				return
+			}
+		}
+		s.mu.Lock()
+		key := s.resolveKeyLocked(in.Endpoint, in.APIKey)
+		s.mu.Unlock()
+		cfg, err := explain.NewConfig(in.Endpoint, "discovery", key)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		models, err := explain.DiscoverModels(r.Context(), cfg)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		provID := explain.ProviderID(cfg.Endpoint, "")
+		s.mu.Lock()
+		if key != "" {
+			s.keys[provID] = key
+			s.keys[cfg.Endpoint] = key
+		}
+		s.verified[provID] = true
+		s.verified[cfg.Endpoint] = true
+		s.mu.Unlock()
+		writeJSON(w, map[string]any{
+			"provider":  provID,
+			"verified":  true,
+			"key_saved": key != "",
+			"models":    models,
+		})
 	})
 	mux.HandleFunc("/api/provider", func(w http.ResponseWriter, r *http.Request) {
 		if !method(w, r, "POST") || !jsonRequest(w, r) {
@@ -99,29 +228,67 @@ func Handler(dir string, assets fs.FS, host string) http.Handler {
 			writeError(w, http.StatusBadRequest, "Invalid provider setup")
 			return
 		}
-		cfg, err := explain.NewConfig(in.Endpoint, in.Model, in.APIKey)
+		s.mu.Lock()
+		key := s.resolveKeyLocked(in.Endpoint, in.APIKey)
+		s.mu.Unlock()
+		cfg, err := explain.NewConfig(in.Endpoint, in.Model, key)
 		if in.Harness != "" {
-			cfg, err = explain.NewHarnessConfig(in.Harness)
+			h := strings.ToLower(strings.TrimSpace(in.Harness))
+			cfg, err = explain.NewHarnessConfig(h)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "unsupported local harness")
+				return
+			}
 			model := strings.TrimSpace(in.Model)
-			if err == nil && (len(model) > 200 || strings.HasPrefix(model, "-") || strings.ContainsAny(in.Model, "\r\n")) {
-				err = errors.New("Invalid Codex model name")
+			if len(model) > 200 || strings.HasPrefix(model, "-") || strings.ContainsAny(in.Model, "\r\n") {
+				writeError(w, http.StatusBadRequest, fmt.Sprintf("Invalid %s model name", explain.HarnessDisplayName(h)))
+				return
 			}
 			cfg.Model = model
-			if err == nil {
-				if _, lookupErr := exec.LookPath("codex"); lookupErr != nil {
-					writeError(w, http.StatusBadRequest, "Codex CLI is not installed or is missing from the server PATH")
-					return
-				}
+			probe := explain.ProbeHarness(r.Context(), h)
+			if !probe.Installed {
+				writeError(w, http.StatusBadRequest, fmt.Sprintf("%s is not installed or is missing from the server PATH", probe.Display))
+				return
 			}
+			if !probe.Supported {
+				writeError(w, http.StatusBadRequest, probe.Reason)
+				return
+			}
+		}
+		if err == nil {
+			err = explain.ValidateModelChoice(cfg)
 		}
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		provID := explain.ProviderID(cfg.Endpoint, cfg.Harness)
 		s.mu.Lock()
+		if cfg.Harness == "" && cfg.APIKey != "" {
+			s.keys[provID] = cfg.APIKey
+			s.keys[cfg.Endpoint] = cfg.APIKey
+		}
+		if in.APIKey != "" && in.APIKey != key {
+			s.verified[provID] = false
+			s.verified[cfg.Endpoint] = false
+		}
 		s.config = &cfg
+		verified := s.verified[provID] || s.verified[cfg.Endpoint]
+		if cfg.Harness != "" {
+			probe := explain.ProbeHarness(r.Context(), cfg.Harness)
+			if probe.Auth == "signed_in" {
+				verified = true
+				s.verified[provID] = true
+			}
+		}
 		s.mu.Unlock()
-		writeJSON(w, map[string]bool{"configured": true})
+		writeJSON(w, map[string]any{
+			"configured": true,
+			"verified":   verified,
+			"key_saved":  cfg.APIKey != "",
+			"provider":   provID,
+			"model":      cfg.Model,
+		})
 	})
 	mux.HandleFunc("/api/evidence", func(w http.ResponseWriter, r *http.Request) {
 		if !method(w, r, "GET") {
@@ -259,6 +426,11 @@ func Handler(dir string, assets fs.FS, host string) http.Handler {
 		sessionToken := hex.EncodeToString(sessionBytes)
 		s.mu.Lock()
 		delete(s.requests, in.Token)
+		provID := explain.ProviderID(p.config.Endpoint, p.config.Harness)
+		s.verified[provID] = true
+		if p.config.Endpoint != "" {
+			s.verified[p.config.Endpoint] = true
+		}
 		now := time.Now()
 		for key, session := range s.quizzes {
 			if now.After(session.expires) && !session.busy {
@@ -319,12 +491,24 @@ func Handler(dir string, assets fs.FS, host string) http.Handler {
 			writeError(w, http.StatusForbidden, "Explicit consent is required before sending evidence for quiz generation")
 			return
 		}
+		for wait := 0; session.busy && session.busyCtx != nil && session.busyCtx.Err() != nil && wait < 100; wait++ {
+			s.mu.Unlock()
+			time.Sleep(20 * time.Millisecond)
+			s.mu.Lock()
+			session, ok = s.quizzes[in.Session]
+			if !ok {
+				s.mu.Unlock()
+				writeError(w, http.StatusBadRequest, "Quiz session expired or does not match this snapshot. Explain the changes again")
+				return
+			}
+		}
 		if session.busy {
 			s.mu.Unlock()
 			writeError(w, http.StatusConflict, "Quiz generation is already running")
 			return
 		}
 		session.busy = true
+		session.busyCtx = r.Context()
 		s.quizzes[in.Session] = session
 		s.mu.Unlock()
 		defer func() {
@@ -332,6 +516,7 @@ func Handler(dir string, assets fs.FS, host string) http.Handler {
 			current, exists := s.quizzes[in.Session]
 			if exists {
 				current.busy = false
+				current.busyCtx = nil
 				s.quizzes[in.Session] = current
 			}
 			s.mu.Unlock()
@@ -385,6 +570,13 @@ func Handler(dir string, assets fs.FS, host string) http.Handler {
 			return
 		}
 		writeJSON(w, map[string]bool{"fresh": fresh})
+	})
+	mux.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.Handle("/", http.FileServer(http.FS(assets)))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

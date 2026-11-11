@@ -28,19 +28,66 @@ function selectTab(name) {
     element(`tab-${tab}`).setAttribute('aria-selected', String(tab === name));
   }
 }
-for (const tab of ['overview','code','flow','quiz']) element(`tab-${tab}`).addEventListener('click', () => selectTab(tab));
+for (const tab of ['overview','code','flow','quiz']) {
+  element(`tab-${tab}`).addEventListener('click', () => {
+    selectTab(tab);
+    if (tab === 'code' && !codeSelection && changedFiles.length) showCode(changedFiles[0].path);
+  });
+}
 element('file-search').addEventListener('input', () => {
   const query = element('file-search').value.toLowerCase();
   for (const entry of changedFiles) entry.item.hidden = !entry.path.toLowerCase().includes(query);
   for (const group of fileGroups) group.heading.hidden = !changedFiles.some(entry => entry.folder === group.folder && !entry.item.hidden);
 });
+function renderDiffExcerpt(excerpt, ref) {
+  const lines = document.createElement('div'); lines.className = 'diff-lines';
+  let oldLine = 0, newLine = 0, active = false, importContext = false, highlighted = null;
+  for (const line of excerpt.split('\n')) {
+    const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+    if (hunk) { oldLine = Number(hunk[1]); newLine = Number(hunk[2]); active = true; importContext = false; lines.append(text('div', line, 'diff-hunk')); continue; }
+    if (line === '[Additional import context from the current file]') { importContext = true; lines.append(text('div', line, 'diff-hunk')); continue; }
+    if (importContext) {
+      const ctxMatch = /^(\d+): (.*)$/.exec(line);
+      if (ctxMatch) {
+        const newNumber = Number(ctxMatch[1]);
+        const hit = ref && ref.side === 'new' && newNumber >= ref.start && newNumber <= ref.end;
+        const row = document.createElement('div'); row.className = `diff-row context${hit ? ' highlighted' : ''}`;
+        row.append(text('span', '', 'line-number'), text('span', newNumber, 'line-number'), text('code', ` ${ctxMatch[2]}`, 'line-code'));
+        lines.append(row); if (hit && !highlighted) highlighted = row;
+        continue;
+      }
+    }
+    if (!active || !line || ![' ', '+', '-'].includes(line[0])) { if (line) lines.append(text('div', line, 'diff-hunk')); continue; }
+    const kind = line[0]; const oldNumber = kind === '+' ? null : oldLine++; const newNumber = kind === '-' ? null : newLine++;
+    const hit = ref && (ref.side === 'old' ? oldNumber : newNumber) >= ref.start && (ref.side === 'old' ? oldNumber : newNumber) <= ref.end && (ref.side === 'old' ? oldNumber : newNumber) !== null;
+    const row = document.createElement('div'); row.className = `diff-row ${kind === '+' ? 'addition' : kind === '-' ? 'deletion' : 'context'}${hit ? ' highlighted' : ''}`;
+    row.append(text('span', oldNumber ?? '', 'line-number'), text('span', newNumber ?? '', 'line-number'), text('code', line, 'line-code')); lines.append(row); if (hit && !highlighted) highlighted = row;
+  }
+  return {lines, highlighted};
+}
+function buildCodeHeader(path) {
+  const header = document.createElement('div'); header.className = 'code-path';
+  header.append(text('span', path));
+  const idx = changedFiles.findIndex(entry => entry.path === path);
+  if (idx >= 0 && changedFiles.length > 1) {
+    const nav = document.createElement('div'); nav.className = 'code-nav';
+    nav.append(text('span', `${idx + 1} / ${changedFiles.length}`, 'code-index'));
+    const prev = text('button', '← Prev', 'code-nav-btn'); prev.type = 'button'; prev.disabled = idx === 0;
+    prev.addEventListener('click', () => { if (idx > 0) showCode(changedFiles[idx - 1].path); });
+    const next = text('button', 'Next →', 'code-nav-btn'); next.type = 'button'; next.disabled = idx === changedFiles.length - 1;
+    next.addEventListener('click', () => { if (idx + 1 < changedFiles.length) showCode(changedFiles[idx + 1].path); });
+    nav.append(prev, next);
+    header.append(nav);
+  }
+  return header;
+}
 async function showCode(path, ref) {
   const selection = ++codeSelection;
   const currentGeneration = generation;
   selectTab('code');
   for (const entry of changedFiles) entry.item.className = entry.path === path ? 'selected' : '';
   const panel = element('code-view'); panel.replaceChildren();
-  panel.append(text('div', path, 'code-path'));
+  panel.append(buildCodeHeader(path));
   if (!snapshotEvidence && !localEvidence) {
     const status = text('p', 'Loading local diff…', 'muted');
     panel.append(status);
@@ -52,7 +99,7 @@ async function showCode(path, ref) {
       const evidence = await evidenceRequest;
       if (generation !== currentGeneration || selection !== codeSelection) return;
       localEvidence = evidence;
-      panel.replaceChildren(text('div', path, 'code-path'));
+      panel.replaceChildren(buildCodeHeader(path));
     } catch (_) {
       if (generation === currentGeneration && selection === codeSelection) {
         evidenceRequest = null;
@@ -69,21 +116,11 @@ async function showCode(path, ref) {
     return;
   }
   panel.append(text('p', `${file.type} · captured diff evidence`, 'code-meta'));
-  const lines = document.createElement('div'); lines.className = 'diff-lines';
-  let oldLine = 0, newLine = 0, active = false, highlighted = null;
-  for (const line of file.excerpt.split('\n')) {
-    const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
-    if (hunk) { oldLine = Number(hunk[1]); newLine = Number(hunk[2]); active = true; lines.append(text('div', line, 'diff-hunk')); continue; }
-    if (!active || !line || ![' ', '+', '-'].includes(line[0])) { if (line) lines.append(text('div', line, 'diff-hunk')); continue; }
-    const kind = line[0]; const oldNumber = kind === '+' ? null : oldLine++; const newNumber = kind === '-' ? null : newLine++;
-    const hit = ref && (ref.side === 'old' ? oldNumber : newNumber) >= ref.start && (ref.side === 'old' ? oldNumber : newNumber) <= ref.end && (ref.side === 'old' ? oldNumber : newNumber) !== null;
-    const row = document.createElement('div'); row.className = `diff-row ${kind === '+' ? 'addition' : kind === '-' ? 'deletion' : 'context'}${hit ? ' highlighted' : ''}`;
-    row.append(text('span', oldNumber ?? '', 'line-number'), text('span', newNumber ?? '', 'line-number'), text('code', line, 'line-code')); lines.append(row); if (hit && !highlighted) highlighted = row;
-  }
+  const {lines, highlighted} = renderDiffExcerpt(file.excerpt, ref);
   panel.append(lines); highlighted?.scrollIntoView?.({block:'center'});
 }
-function citationButton(ref) {
-  const button = text('button', `${ref.path} · ${ref.side} ${ref.start}–${ref.end}`, 'citation'); button.type = 'button';
+function citationButton(ref, label) {
+  const button = text('button', label || `${ref.path} · ${ref.side} ${ref.start}–${ref.end}`, 'citation'); button.type = 'button';
   button.addEventListener('click', () => showCode(ref.path, ref)); return button;
 }
 async function refresh() {
@@ -91,6 +128,7 @@ async function refresh() {
   clearQuiz();
   if (requestController) requestController.abort();
   pending = null;
+  codeSelection = 0;
   snapshotEvidence = null; localEvidence = null; evidenceRequest = null; changedFiles = []; fileGroups = [];
   selectTab('overview'); element('overview-empty').hidden = false; element('quiz-empty').hidden = false;
   element('consent-panel').hidden = true;
@@ -133,6 +171,7 @@ async function refresh() {
       meta.append(text('span', details, 'file-stats'));
       if (file.details) meta.append(text('span', file.details, 'file-stats'));
       item.append(paths, meta); item.setAttribute('role', 'button'); item.setAttribute('tabindex', '0');
+      item.setAttribute('aria-label', `${file.path}, ${file.type}, ${details}`);
       item.addEventListener('click', () => showCode(file.path));
       item.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); showCode(file.path); } });
       changedFiles.push({path:file.path,folder,item}); element('files').append(item);
@@ -144,16 +183,83 @@ async function refresh() {
   } finally { button.disabled = false; element('explain').disabled = !loaded; }
 }
 element('refresh').addEventListener('click', refresh);
-const providers = {codex:['','','Codex'],groq:['https://api.groq.com/openai/v1/chat/completions','openai/gpt-oss-20b','Groq'],openai:['https://api.openai.com/v1/chat/completions','gpt-4.1-mini','OpenAI'],gemini:['https://generativelanguage.googleapis.com/v1beta/openai/chat/completions','gemini-3.8-flash','Gemini'],xai:['https://api.x.ai/v1/responses','grok-4.7','Grok'],ollama:['http://127.0.0.1:11434/v1/chat/completions','llama3.2','Ollama'],lmstudio:['http://127.0.0.1:1234/v1/chat/completions','local-model','LM Studio']};
+const HARNESS_KEYS = {codex: 'codex', claude: 'claude', 'gemini-cli': 'gemini'};
+const providers = {
+  codex: ['', '', 'Codex CLI'],
+  claude: ['', '', 'Claude Code'],
+  'gemini-cli': ['', '', 'Gemini CLI'],
+  groq: ['https://api.groq.com/openai/v1/chat/completions', 'openai/gpt-oss-120b', 'Groq'],
+  openai: ['https://api.openai.com/v1/chat/completions', 'gpt-4.1-mini', 'OpenAI'],
+  gemini: ['https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', 'gemini-2.5-flash', 'Gemini'],
+  xai: ['https://api.x.ai/v1/responses', 'grok-3-mini', 'Grok'],
+  ollama: ['http://127.0.0.1:11434/v1/chat/completions', 'qwen2.5-coder:7b', 'Ollama'],
+  lmstudio: ['http://127.0.0.1:1234/v1/chat/completions', 'local-model', 'LM Studio']
+};
+const providerMemory = {};
+let activeProviderChoice = null;
+function getProviderMemory(choice) {
+  if (!providerMemory[choice]) {
+    const defaultModel = providers[choice] ? providers[choice][1] : '';
+    providerMemory[choice] = {model: defaultModel, models: [], configured: false, verified: false, keySaved: false};
+  }
+  return providerMemory[choice];
+}
+function updateProviderBadge() {
+  const badge = element('provider-badge');
+  if (!activeProviderChoice || !providers[activeProviderChoice]) { badge.hidden = true; return; }
+  const [,,name] = providers[activeProviderChoice];
+  const mem = getProviderMemory(activeProviderChoice);
+  const isHarness = Boolean(HARNESS_KEYS[activeProviderChoice]);
+  const modelLabel = mem.model || (isHarness ? 'default' : '');
+  const stateLabel = mem.verified ? 'verified' : 'configured, unverified';
+  badge.textContent = `${name}${modelLabel ? ` · ${modelLabel}` : ''} (${stateLabel})`;
+  badge.hidden = false;
+}
+function syncModelSelect(choice) {
+  const mem = getProviderMemory(choice);
+  const selectLabel = element('provider-model-select-label');
+  const select = element('provider-model-select');
+  if (!mem.models.length) {
+    selectLabel.hidden = true;
+    select.replaceChildren();
+    return;
+  }
+  const children = [];
+  for (const m of mem.models) {
+    const opt = text('option', m);
+    opt.value = m;
+    children.push(opt);
+  }
+  const customOpt = text('option', 'Custom model ID…');
+  customOpt.value = '__custom__';
+  children.push(customOpt);
+  select.replaceChildren(...children);
+  select.value = mem.models.includes(mem.model) ? mem.model : '__custom__';
+  selectLabel.hidden = false;
+}
 function showProviderFields() {
   const choice = element('provider-choice').value || 'codex';
+  if (!providers[choice]) return;
   const [,,name] = providers[choice];
-  element('provider-model').value = providers[choice][1];
+  const mem = getProviderMemory(choice);
+  const isHarness = Boolean(HARNESS_KEYS[choice]);
+  element('provider-model').value = mem.model;
   element('provider-model-label').hidden = false;
-  element('provider-model').placeholder = choice === 'codex' ? 'Use Codex default' : 'Enter model ID';
-  element('provider-key-label').hidden = ['codex', 'ollama', 'lmstudio'].includes(choice);
+  element('provider-model').placeholder = isHarness ? `Use ${name} default (or custom ID)` : 'Enter model ID';
+  const needsKey = !isHarness && !['ollama', 'lmstudio'].includes(choice);
+  element('provider-key-label').hidden = !needsKey;
   element('provider-key').value = '';
-  element('provider-status').textContent = `${name} settings are applied when you choose Save settings.`;
+  element('provider-key').placeholder = needsKey && mem.keySaved ? 'Saved for session (leave blank to keep)' : '';
+  element('provider-discover').textContent = isHarness ? 'Check CLI' : 'Load models';
+  syncModelSelect(choice);
+  if (mem.configured) {
+    const stateText = mem.verified ? 'verified' : 'configured (unverified until you load models or request an explanation)';
+    element('provider-status').textContent = `${name} (${mem.model || 'default'}) is ${stateText}.`;
+  } else {
+    element('provider-status').textContent = isHarness
+      ? `${name} uses your existing CLI login. Select Save settings to use this agent.`
+      : `${name} settings are applied when you choose Save settings.`;
+  }
 }
 async function discoverHarnesses() {
   const status = element('harness-status');
@@ -162,32 +268,121 @@ async function discoverHarnesses() {
     if (!response.ok) throw new Error('Discovery failed');
     const harnesses = await response.json();
     status.textContent = harnesses.map(h => {
+      const displayName = h.display || h.name;
       const availability = h.installed ? 'installed' : 'not installed';
+      let authInfo = '';
+      if (h.auth === 'signed_in') authInfo = ', signed in';
+      else if (h.auth === 'signed_out') authInfo = ', not signed in';
       const support = h.supported ? 'available for setup' : 'integration unavailable';
-      return `${h.name}: ${availability}, ${support}`;
+      return `${displayName}: ${availability}${authInfo}, ${support}`;
     }).join(' · ');
   } catch (_) {
     status.textContent = 'Could not check installed harnesses. Refresh to try again.';
   }
 }
 element('provider-choice').addEventListener('change', showProviderFields);
+element('provider-model-select').addEventListener('change', () => {
+  const choice = element('provider-choice').value || 'codex';
+  const mem = getProviderMemory(choice);
+  const val = element('provider-model-select').value;
+  if (val && val !== '__custom__') {
+    mem.model = val;
+    element('provider-model').value = val;
+  }
+});
+element('provider-model').addEventListener('input', () => {
+  const choice = element('provider-choice').value || 'codex';
+  const mem = getProviderMemory(choice);
+  mem.model = element('provider-model').value.trim();
+  if (mem.models.length) {
+    element('provider-model-select').value = mem.models.includes(mem.model) ? mem.model : '__custom__';
+  }
+});
 showProviderFields();
 discoverHarnesses();
+element('provider-discover').addEventListener('click', async () => {
+  const choice = element('provider-choice').value || 'codex';
+  if (!providers[choice]) return;
+  const [endpoint,,name] = providers[choice];
+  const mem = getProviderMemory(choice);
+  const isHarness = Boolean(HARNESS_KEYS[choice]);
+  const discoverBtn = element('provider-discover');
+  const connectBtn = element('provider-connect');
+  const status = element('provider-status');
+  discoverBtn.disabled = true;
+  connectBtn.disabled = true;
+  element('provider-choice').disabled = true;
+  status.textContent = isHarness ? `Checking ${name} on PATH…` : `Querying available models from ${name}…`;
+  try {
+    const payload = isHarness ? {harness: HARNESS_KEYS[choice]} : {endpoint, api_key: element('provider-key').value};
+    const res = await post('/api/provider/models', payload);
+    element('provider-key').value = '';
+    if (res.key_saved) {
+      mem.keySaved = true;
+      element('provider-key').placeholder = 'Saved for session (leave blank to keep)';
+    }
+    if (isHarness) {
+      status.textContent = res.message || `${name} found on PATH.`;
+      if (res.verified) {
+        mem.verified = true;
+        if (activeProviderChoice === choice) updateProviderBadge();
+      }
+      return;
+    }
+    const models = Array.isArray(res.models) ? res.models : [];
+    mem.models = models;
+    mem.verified = Boolean(res.verified);
+    if (models.length > 0 && (!mem.model || !models.includes(mem.model))) {
+      mem.model = models[0];
+      element('provider-model').value = models[0];
+    }
+    syncModelSelect(choice);
+    if (activeProviderChoice === choice) updateProviderBadge();
+    status.textContent = models.length
+      ? `Verified ${name} connection (${models.length} chat/code model${models.length === 1 ? '' : 's'} discovered). Choose a model and select Save settings.`
+      : `Connected to ${name}, but no models were listed. Enter a model ID and select Save settings.`;
+  } catch (error) {
+    status.textContent = error.message;
+  } finally {
+    discoverBtn.disabled = false;
+    connectBtn.disabled = false;
+    element('provider-choice').disabled = false;
+  }
+});
 element('provider-connect').addEventListener('click', async () => {
   const choice = element('provider-choice').value || 'codex';
+  if (!providers[choice]) return;
   const [endpoint,,name] = providers[choice];
+  const mem = getProviderMemory(choice);
+  const isHarness = Boolean(HARNESS_KEYS[choice]);
   const model = element('provider-model').value.trim();
-  const setup = choice === 'codex' ? {harness: 'codex', model} : {endpoint, model, api_key: element('provider-key').value};
+  const setup = isHarness ? {harness: HARNESS_KEYS[choice], model} : {endpoint, model, api_key: element('provider-key').value};
   const button = element('provider-connect');
   const status = element('provider-status');
   button.disabled = true;
   element('provider-choice').disabled = true;
   try {
-    await post('/api/provider', setup);
+    const res = await post('/api/provider', setup);
     element('provider-key').value = '';
-    status.textContent = choice === 'codex'
-      ? 'Codex CLI found. Settings saved for this session. Sign-in and model access are checked when you request an explanation.'
-      : `${name} settings saved for this session. The key and model are checked when you request an explanation.`;
+    mem.model = model;
+    mem.configured = true;
+    mem.keySaved = Boolean(res.key_saved) || mem.keySaved;
+    const modelInDiscovered = mem.models.length > 0 && mem.models.includes(model);
+    mem.verified = Boolean(res.verified) && (!mem.models.length || modelInDiscovered);
+    if (!isHarness && !['ollama', 'lmstudio'].includes(choice) && mem.keySaved) {
+      element('provider-key').placeholder = 'Saved for session (leave blank to keep)';
+    }
+    activeProviderChoice = choice;
+    updateProviderBadge();
+    if (isHarness) {
+      status.textContent = mem.verified
+        ? `${name} found and signed in. Settings saved for this session.`
+        : `${name} found. Settings saved for this session (unverified until you request an explanation).`;
+    } else if (mem.verified) {
+      status.textContent = `${name} (${model}) settings saved for this session and verified against available models.`;
+    } else {
+      status.textContent = `${name} (${model}) settings saved for this session. The key and model are checked when you load models or request an explanation.`;
+    }
   } catch (error) {
     status.textContent = error.message;
   } finally {
@@ -206,7 +401,7 @@ function addPreview(container, evidence) {
   for (const file of evidence.files) {
     const detail = document.createElement('details');
     detail.append(text('summary', `${file.path} (${file.type})`));
-    detail.append(text('pre', file.excerpt, 'excerpt'));
+    detail.append(renderDiffExcerpt(file.excerpt).lines);
     container.append(detail);
   }
 }
@@ -249,14 +444,24 @@ async function sendExplanation(consent) {
   try {
     const result = await post('/api/explain', {token, consent}, controller.signal);
     if (currentGeneration !== generation) return;
+    pending = null;
+    if (activeProviderChoice) {
+      getProviderMemory(activeProviderChoice).verified = true;
+      updateProviderBadge();
+    }
     showExplanation(result);
     element('explain-status').textContent = 'Explanation ready. The provider for this request completed inference.';
   } catch (error) {
-    if (currentGeneration === generation) element('explain-status').textContent = error.name === 'AbortError' ? 'Request canceled.' : error.message;
-  } finally { if (currentGeneration === generation) { pending = null; requestController = null; element('cancel-request').hidden = true; element('explain').disabled = false; } }
+    if (currentGeneration === generation) {
+      element('consent-panel').hidden = false;
+      element('explain-status').textContent = error.name === 'AbortError' ? 'Request canceled.' : error.message;
+    }
+  } finally { if (currentGeneration === generation) { requestController = null; element('cancel-request').hidden = true; element('explain').disabled = false; } }
 }
 element('explain').addEventListener('click', async () => {
   element('explain').disabled = true;
+  pending = null;
+  element('consent-panel').hidden = true;
   clearQuiz();
   element('explanation').hidden = true;
   clearGraph('Preparing a new explanation. The previous change flow has been cleared.');
@@ -270,7 +475,7 @@ element('explain').addEventListener('click', async () => {
     element('consent-title').textContent = pending.local ? 'Review evidence for your local provider' : 'Review before sending';
     element('consent-label').hidden = pending.local;
     element('send-evidence').textContent = pending.local ? 'Explain locally' : 'Send and explain';
-    element('privacy-info').textContent = `Provider: ${pending.endpoint} · Model: ${pending.model || 'configured in Codex CLI'}. Sending will transmit the selected file paths, diff excerpts, surrounding code and line references below. ${pending.local ? 'Evidence is passed to the selected local process or loopback service, which controls its own upstream access.' : 'The provider may retain this data. Review the evidence before consenting.'}`;
+    element('privacy-info').textContent = `Provider: ${pending.endpoint} · Model: ${pending.model || 'CLI default'}. Sending will transmit the selected file paths, diff excerpts, surrounding code and line references below. ${pending.local ? 'Evidence is passed to the selected local process or CLI. Note that local coding CLIs (such as Codex, Claude Code, or Gemini CLI) may transmit code to their remote AI services under your existing account. Review the evidence before proceeding.' : 'The provider may retain this data. Review the evidence before consenting.'}`;
     addPreview(element('preview'), pending.evidence);
     element('skipped').textContent = pending.skipped.length ? `Skipped: ${pending.skipped.map((f) => `${f.path} (${f.reason})`).join(', ')}` : 'No files were skipped by the evidence filter.';
     element('consent-panel').hidden = false;
