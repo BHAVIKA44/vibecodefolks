@@ -5,6 +5,10 @@ printf '%s\n' "$version" | LC_ALL=C grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)
 mkdir -p "$dest"
 dest=$(cd "$dest" && pwd)
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT HUP INT TERM
+has_gnu_tar=0
+if tar --sort=name --version >/dev/null 2>&1; then
+  has_gnu_tar=1
+fi
 for target in darwin_arm64 darwin_amd64 linux_arm64 linux_amd64 windows_amd64; do
  os=${target%_*}; arch=${target#*_}; name=vibecodefolks
  [ "$os" != windows ] || name=vibecodefolks.exe
@@ -13,7 +17,11 @@ for target in darwin_arm64 darwin_amd64 linux_arm64 linux_amd64 windows_amd64; d
  if [ "$os" = windows ]; then
    (cd "$tmp" && TZ=UTC touch -t 202001010000 "$name" && zip -X -q "$dest/$asset.zip" "$name")
  else
-   tar --sort=name --mtime='UTC 2020-01-01' --owner=0 --group=0 --numeric-owner -C "$tmp" -cf - "$name" | gzip -n > "$dest/$asset.tar.gz"
+   if [ "$has_gnu_tar" = 1 ]; then
+     tar --sort=name --mtime='UTC 2020-01-01' --owner=0 --group=0 --numeric-owner -C "$tmp" -cf - "$name" | gzip -n > "$dest/$asset.tar.gz"
+   else
+     tar -C "$tmp" -cf - "$name" | gzip -n > "$dest/$asset.tar.gz"
+   fi
  fi
  rm -f "$tmp/$name"
 done
