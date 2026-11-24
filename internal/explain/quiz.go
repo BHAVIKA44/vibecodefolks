@@ -3,6 +3,7 @@ package explain
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"io"
 	"strings"
@@ -190,5 +191,58 @@ func decodeDedicatedQuiz(content string, used analysis.Evidence) (*Quiz, string,
 			}
 		}
 	}
+	for i := range quiz.Questions {
+		shuffleQuestionOptions(&quiz.Questions[i])
+	}
 	return quiz, "available", nil
+}
+
+// shuffleQuestionOptions deterministically permutes a validated question's 4 options
+// together with option_explanations and correct_index so LLM option-A bias does not
+// make answer positions predictable. Positional options (e.g. "all of the above") are left in place.
+func shuffleQuestionOptions(q *Question) {
+	if q == nil || len(q.Options) != 4 || q.CorrectIndex == nil || *q.CorrectIndex < 0 || *q.CorrectIndex >= 4 {
+		return
+	}
+	for _, opt := range q.Options {
+		lower := strings.ToLower(opt)
+		if strings.Contains(lower, "of the above") || strings.Contains(lower, "option a") || strings.Contains(lower, "option b") || strings.Contains(lower, "option c") || strings.Contains(lower, "option d") || strings.Contains(lower, "both a") {
+			return
+		}
+	}
+	h := sha256.New()
+	h.Write([]byte(q.ID))
+	h.Write([]byte("\n"))
+	h.Write([]byte(q.Text))
+	for _, opt := range q.Options {
+		h.Write([]byte("\n"))
+		h.Write([]byte(opt))
+	}
+	sum := h.Sum(nil)
+	perm := [4]int{0, 1, 2, 3}
+	for i := 3; i > 0; i-- {
+		j := int(sum[3-i]) % (i + 1)
+		perm[i], perm[j] = perm[j], perm[i]
+	}
+	newOpts := make([]string, 4)
+	var newExps []string
+	hasExps := len(q.OptionExplanations) == 4
+	if hasExps {
+		newExps = make([]string, 4)
+	}
+	newCorrect := *q.CorrectIndex
+	for newIdx, oldIdx := range perm {
+		newOpts[newIdx] = q.Options[oldIdx]
+		if hasExps {
+			newExps[newIdx] = q.OptionExplanations[oldIdx]
+		}
+		if oldIdx == *q.CorrectIndex {
+			newCorrect = newIdx
+		}
+	}
+	q.Options = newOpts
+	if hasExps {
+		q.OptionExplanations = newExps
+	}
+	*q.CorrectIndex = newCorrect
 }
