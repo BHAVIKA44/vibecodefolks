@@ -179,3 +179,50 @@ func TestDedicatedQuizDistinctFeedbackAndCaseSensitiveOutcomes(t *testing.T) {
 		t.Fatalf("contradictory correct_index vs option_explanations accepted: %s", diagnostic)
 	}
 }
+
+func TestDedicatedQuizShufflesOptionsAndPreservesAlignment(t *testing.T) {
+	seenIdx := map[int]int{}
+	for i := 0; i < 24; i++ {
+		q := testQuiz()
+		zero := 0
+		q.Questions[0].ID = "q" + string(rune('a'+i))
+		q.Questions[0].Text = "Scenario " + string(rune('A'+i)) + " behavior?"
+		q.Questions[0].CorrectIndex = &zero
+		q.Questions[0].Options = []string{"right answer", "wrong one", "wrong two", "wrong three"}
+		q.Questions[0].OptionExplanations = []string{"Correct: right answer", "Incorrect: wrong one", "Incorrect: wrong two", "Incorrect: wrong three"}
+		raw, _ := json.Marshal(q)
+		got, diag, err := decodeDedicatedQuiz(string(raw), graphFixture())
+		if err != nil || diag != "available" || got == nil {
+			t.Fatalf("case %d failed: diag=%q err=%v", i, diag, err)
+		}
+		gq := got.Questions[0]
+		idx := *gq.CorrectIndex
+		seenIdx[idx]++
+		if gq.Options[idx] != "right answer" {
+			t.Fatalf("case %d: shuffled correct option = %q, want right answer", i, gq.Options[idx])
+		}
+		if gq.OptionExplanations[idx] != "Correct: right answer" {
+			t.Fatalf("case %d: shuffled correct explanation = %q", i, gq.OptionExplanations[idx])
+		}
+		for j := 0; j < 4; j++ {
+			if j != idx && !strings.HasPrefix(gq.OptionExplanations[j], "Incorrect: ") {
+				t.Fatalf("case %d: distractor %d explanation = %q", i, j, gq.OptionExplanations[j])
+			}
+		}
+	}
+	if len(seenIdx) < 3 {
+		t.Fatalf("expected shuffled correct_index spread across slots, got %v", seenIdx)
+	}
+
+	// Positional wording ("all of the above") must not be shuffled.
+	q := testQuiz()
+	zero := 0
+	q.Questions[0].CorrectIndex = &zero
+	q.Questions[0].Options = []string{"first", "second", "third", "All of the above"}
+	q.Questions[0].OptionExplanations = []string{"Correct: first", "Incorrect: second", "Incorrect: third", "Incorrect: all"}
+	raw, _ := json.Marshal(q)
+	got, diag, _ := decodeDedicatedQuiz(string(raw), graphFixture())
+	if got == nil || diag != "available" || got.Questions[0].Options[3] != "All of the above" || *got.Questions[0].CorrectIndex != 0 {
+		t.Fatalf("positional option should not be shuffled: %+v", got)
+	}
+}
