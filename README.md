@@ -47,7 +47,7 @@ vibecodefolks /path/to/your/project
 
 ### 2. Install Stable Release (macOS & Linux)
 
-To install the latest published stable release (`v0.1.0`):
+To install the latest published release (`v1.0.1`):
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/BHAVIKA44/vibecodefolks/main/install.sh | sh
@@ -55,14 +55,12 @@ curl -fsSL https://raw.githubusercontent.com/BHAVIKA44/vibecodefolks/main/instal
 
 The script verifies SHA-256 checksums from the [Releases](https://github.com/BHAVIKA44/vibecodefolks/releases) page and installs to `~/.local/bin`. Set `VIBECODEFOLKS_INSTALL_DIR` to choose a custom directory.
 
-> **Note on Releases:** The installer currently downloads release `v0.1.0`. To use the newest coding-agent integrations (**Codex CLI**, **Claude Code**, and **Gemini CLI**) and dynamic model discovery merged on `main`, build from source with `go run .` or `go install`.
-
 ### 3. Install Stable Release (Windows PowerShell)
 
 For Windows (Git must already be installed):
 
 ```powershell
-$tag = 'v0.1.0'
+$tag = 'v1.0.1'
 $asset = "vibecodefolks_${tag}_windows_amd64.zip"
 $base = "https://github.com/BHAVIKA44/vibecodefolks/releases/download/$tag"
 $dir = Join-Path $env:USERPROFILE '.local\bin'
@@ -199,7 +197,7 @@ Choose **"Test my understanding"** to generate an evidence-backed quiz.
 
 ## Scope & Limitations
 
-- **Working-Tree-Only Scope (v1.0.0):** VibeCodeFolks inspects the current uncommitted working-tree diff against `HEAD` (or the last commit if the working tree is clean). Arbitrary revision range comparisons (`git diff branchA..branchB`) are planned for a future release.
+- **Working-Tree-Only Scope (v1.0.1):** VibeCodeFolks inspects the current uncommitted working-tree diff against `HEAD` (or the last commit if the working tree is clean). Arbitrary revision range comparisons (`git diff branchA..branchB`) are planned for a future release.
 - **AI Output is an Interpretation:** AI summaries and quiz questions are models' interpretations of text diffs, not runtime execution proofs. Always verify critical behavior with your test suite.
 - **Diff Boundaries:** Diff context is capped at 20 files, 32 KiB per file/diff, and 160 KiB total diff text. Larger changes will be summarized with omitted hunks flagged.
 - **Unverified Configurations:** While wire contracts are implemented for all listed providers, live end-to-end inference has been verified on `Codex CLI` (`gpt-6.1-sol`), `Groq` (`openai/gpt-oss-120b`), and `Groq` (`qwen/qwen3.8-27b`). Other models and CLIs are marked unverified until tested.
